@@ -1,0 +1,213 @@
+name: Setup Branch Protection
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply_rules:
+        description: 'Apply branch protection rules'
+        required: true
+        default: 'dry-run'
+        type: choice
+        options:
+        - dry-run
+        - apply
+
+jobs:
+  setup-branch-protection:
+    name: Configure Branch Protection Rules
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install GitHub CLI
+        run: |
+          type -p curl >/dev/null || sudo apt update && sudo apt install curl -y
+          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+          sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+          sudo apt update
+          sudo apt install gh -y
+
+      - name: Configure GitHub CLI
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
+
+      - name: Setup Main Branch Protection (Dry Run)
+        if: github.event.inputs.apply_rules == 'dry-run'
+        run: |
+          echo "🔒 Main Branch Protection Rules (DRY RUN):"
+          echo "════════════════════════════════════════"
+          echo "✅ Require pull request reviews: 2"
+          echo "✅ Dismiss stale reviews: true"
+          echo "✅ Require review from code owners: true"
+          echo "✅ Restrict pushes to matching branches: true"
+          echo "✅ Require status checks to pass: true"
+          echo "✅ Require conversation resolution: true"
+          echo "✅ Require linear history: true"
+          echo ""
+          echo "📋 Required Status Checks:"
+          echo "  - Test and Validate"
+          echo "  - Code Quality / Python Code Quality"
+          echo "  - Code Quality / JavaScript/React Code Quality"
+          echo "  - Security Scan / Security Vulnerability Scan"
+          echo "  - Security Scan / Secret Scanning"
+          echo ""
+          echo "To apply these rules, re-run with 'apply' option"
+
+      - name: Setup Develop Branch Protection (Dry Run)
+        if: github.event.inputs.apply_rules == 'dry-run'
+        run: |
+          echo "🛡️ Develop Branch Protection Rules (DRY RUN):"
+          echo "══════════════════════════════════════════"
+          echo "✅ Require pull request reviews: 1"
+          echo "✅ Dismiss stale reviews: true"
+          echo "✅ Require status checks to pass: true"
+          echo ""
+          echo "📋 Required Status Checks:"
+          echo "  - Test and Validate"
+          echo "  - Code Quality / Python Code Quality"
+          echo "  - Code Quality / JavaScript/React Code Quality"
+          echo "  - Security Scan / Security Vulnerability Scan"
+
+      - name: Apply Main Branch Protection
+        if: github.event.inputs.apply_rules == 'apply'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "🔒 Applying Main Branch Protection Rules..."
+          
+          # Create or update main branch protection
+          gh api repos/:owner/:repo/branches/main/protection \
+            --method PUT \
+            --field required_status_checks='{"strict":true,"contexts":["Test and Validate","Code Quality / Python Code Quality","Code Quality / JavaScript/React Code Quality","Security Scan / Security Vulnerability Scan","Security Scan / Secret Scanning"]}' \
+            --field enforce_admins=true \
+            --field required_pull_request_reviews='{"required_approving_review_count":2,"dismiss_stale_reviews":true,"require_code_owner_reviews":true,"dismissal_restrictions":{"users":[],"teams":[]}}' \
+            --field restrictions='{"users":[],"teams":[],"apps":[]}' \
+            --field allow_squash_merge=true \
+            --field allow_merge_commit=true \
+            --field allow_rebase_merge=false
+          
+          echo "✅ Main branch protection rules applied successfully!"
+
+      - name: Apply Develop Branch Protection
+        if: github.event.inputs.apply_rules == 'apply'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "🛡️ Applying Develop Branch Protection Rules..."
+          
+          # Create develop branch if it doesn't exist
+          git checkout -b develop || git checkout develop
+          git push origin develop || echo "Develop branch already exists"
+          
+          # Create or update develop branch protection
+          gh api repos/:owner/:repo/branches/develop/protection \
+            --method PUT \
+            --field required_status_checks='{"strict":true,"contexts":["Test and Validate","Code Quality / Python Code Quality","Code Quality / JavaScript/React Code Quality","Security Scan / Security Vulnerability Scan"]}' \
+            --field enforce_admins=false \
+            --field required_pull_request_reviews='{"required_approving_review_count":1,"dismiss_stale_reviews":true,"require_code_owner_reviews":false}' \
+            --field restrictions=null \
+            --field allow_squash_merge=true \
+            --field allow_merge_commit=true \
+            --field allow_rebase_merge=true
+          
+          echo "✅ Develop branch protection rules applied successfully!"
+
+      - name: Setup Repository Settings
+        if: github.event.inputs.apply_rules == 'apply'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "⚙️ Configuring Repository Settings..."
+          
+          # Update repository settings
+          gh api repos/:owner/:repo \
+            --method PATCH \
+            --field allow_squash_merge=true \
+            --field allow_merge_commit=true \
+            --field allow_rebase_merge=false \
+            --field delete_branch_on_merge=true \
+            --field has_wiki=true \
+            --field has_projects=true \
+            --field has_issues=true \
+            --field allow_auto_merge=true
+          
+          echo "✅ Repository settings configured successfully!"
+
+      - name: Create Issue Labels
+        if: github.event.inputs.apply_rules == 'apply'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "🏷️ Creating Issue Labels..."
+          
+          # Define labels with colors
+          labels=(
+            "bug,d73a4a,Something isn't working"
+            "enhancement,a2eeef,New feature or request"
+            "documentation,0075ca,Improvements or additions to documentation"
+            "good first issue,7057ff,Good for newcomers"
+            "help wanted,008672,Extra attention is needed"
+            "question,d876e3,Further information is requested"
+            "wontfix,ffffff,This will not be worked on"
+            "security,b60205,Security related issue"
+            "performance,1d76db,Performance improvement"
+            "infrastructure,0e8a16,Infrastructure related"
+            "frontend,e99695,Frontend related"
+            "backend,c2e0c6,Backend related"
+            "database,bfdadc,Database related"
+            "ci/cd,fef2c0,CI/CD pipeline related"
+            "priority:low,d4c5f9,Low priority"
+            "priority:medium,c5def5,Medium priority"
+            "priority:high,b7e5b4,High priority"
+            "priority:critical,ff6b6b,Critical priority"
+            "size:small,c7f0db,Small change"
+            "size:medium,ffeaa7,Medium change"
+            "size:large,fab1a0,Large change"
+            "status:in-progress,fdcb6e,Currently being worked on"
+            "status:review,6c5ce7,Ready for review"
+            "status:blocked,fd79a8,Blocked by dependencies"
+          )
+          
+          for label in "${labels[@]}"; do
+            IFS=',' read -r name color description <<< "$label"
+            gh api repos/:owner/:repo/labels \
+              --method POST \
+              --field name="$name" \
+              --field color="$color" \
+              --field description="$description" \
+              2>/dev/null || echo "Label '$name' already exists"
+          done
+          
+          echo "✅ Issue labels created successfully!"
+
+      - name: Summary
+        run: |
+          echo "📊 Branch Protection Setup Summary"
+          echo "═══════════════════════════════════"
+          
+          if [ "${{ github.event.inputs.apply_rules }}" == "apply" ]; then
+            echo "✅ Main branch protection rules applied"
+            echo "✅ Develop branch protection rules applied"
+            echo "✅ Repository settings configured"
+            echo "✅ Issue labels created"
+            echo ""
+            echo "🎉 Your repository is now fully configured!"
+            echo ""
+            echo "Next Steps:"
+            echo "1. Create feature branches from 'develop'"
+            echo "2. Open PRs to merge features into 'develop'"
+            echo "3. Create release PRs from 'develop' to 'main'"
+            echo "4. Follow the branch strategy documented in .github/BRANCH_STRATEGY.md"
+          else
+            echo "🔍 Dry run completed - no changes applied"
+            echo "💡 To apply the branch protection rules, re-run this workflow with 'apply' option"
+          fi
+          
+          echo ""
+          echo "📚 Documentation:"
+          echo "  - Branch Strategy: .github/BRANCH_STRATEGY.md"
+          echo "  - PR Template: .github/PULL_REQUEST_TEMPLATE/"
+          echo "  - Code Owners: .github/CODEOWNERS"

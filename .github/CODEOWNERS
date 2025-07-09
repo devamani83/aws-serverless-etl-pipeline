@@ -1,0 +1,57 @@
+# Code Owners for AWS Serverless ETL Pipeline
+# This file defines who must review PRs that affect specific parts of the codebase
+# Order is important; the last matching pattern takes precedence
+
+# Global ownership - default reviewers for all files
+* @devamani83
+
+# Infrastructure and DevOps
+infrastructure/ @devamani83
+.github/workflows/ @devamani83
+.github/BRANCH_STRATEGY.md @devamani83
+.github/SECRETS.md @devamani83
+*.yml @devamani83
+*.yaml @devamani83
+cdk.json @devamani83
+sonar-project.properties @devamani83
+
+# Database and ETL Core
+sql/ @devamani83
+glue-jobs/ @devamani83
+lambda-functions/ @devamani83
+step-functions/ @devamani83
+scripts/setup_database.py @devamani83
+scripts/migrate_*.py @devamani83
+
+# Data Models and Configuration
+data-models/ @devamani83
+config/ @devamani83
+
+# Frontend Application
+ui-application/frontend/ @devamani83
+ui-application/frontend/package.json @devamani83
+ui-application/frontend/src/ @devamani83
+
+# Backend API
+ui-application/backend/ @devamani83
+
+# Documentation
+README.md @devamani83
+docs/ @devamani83
+*.md @devamani83
+
+# Configuration Files
+.gitignore @devamani83
+.flake8 @devamani83
+pyproject.toml @devamani83
+requirements.txt @devamani83
+.eslintrc.json @devamani83
+.prettierrc @devamani83
+
+# Security Sensitive Files
+.github/workflows/security.yml @devamani83
+.github/workflows/deploy.yml @devamani83
+.github/SECRETS.md @devamani83
+
+# Testing
+tests/ @devamani83
