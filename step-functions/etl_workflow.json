@@ -1,0 +1,381 @@
+{
+  "Comment": "Advisory Performance ETL Pipeline with Data Quality and Reconciliation",
+  "StartAt": "ValidateInput",
+  "States": {
+    "ValidateInput": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "advisory-etl-input-validator",
+        "Payload.$": "$"
+      },
+      "ResultPath": "$.validation",
+      "Next": "CheckValidation",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "HandleError",
+          "ResultPath": "$.error"
+        }
+      ]
+    },
+    
+    "CheckValidation": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.validation.Payload.isValid",
+          "BooleanEquals": true,
+          "Next": "DataProfiler"
+        }
+      ],
+      "Default": "ValidationFailed"
+    },
+    
+    "ValidationFailed": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "advisory-etl-notification",
+        "Payload": {
+          "message": "Input validation failed",
+          "details.$": "$.validation.Payload.errors",
+          "severity": "ERROR"
+        }
+      },
+      "End": true
+    },
+    
+    "DataProfiler": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::glue:startJobRun.sync",
+      "Parameters": {
+        "JobName": "advisory-data-profiler",
+        "Arguments": {
+          "--input_path.$": "$.input_path",
+          "--vendor.$": "$.vendor",
+          "--config_path.$": "$.config_path"
+        }
+      },
+      "ResultPath": "$.profiling",
+      "Next": "MainETLJob",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "HandleError",
+          "ResultPath": "$.error"
+        }
+      ]
+    },
+    
+    "MainETLJob": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::glue:startJobRun.sync",
+      "Parameters": {
+        "JobName": "advisory-performance-etl",
+        "Arguments": {
+          "--input_path.$": "$.input_path",
+          "--vendor.$": "$.vendor",
+          "--config_path.$": "$.config_path",
+          "--profiling_results.$": "$.profiling.JobRunState"
+        }
+      },
+      "ResultPath": "$.etl_result",
+      "Next": "CheckETLSuccess",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "HandleError",
+          "ResultPath": "$.error"
+        }
+      ]
+    },
+    
+    "CheckETLSuccess": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.etl_result.JobRunState",
+          "StringEquals": "SUCCEEDED",
+          "Next": "ParallelValidation"
+        }
+      ],
+      "Default": "ETLFailed"
+    },
+    
+    "ETLFailed": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "advisory-etl-notification",
+        "Payload": {
+          "message": "ETL job failed",
+          "details.$": "$.etl_result",
+          "severity": "ERROR"
+        }
+      },
+      "Next": "ArchiveErrorFile"
+    },
+    
+    "ParallelValidation": {
+      "Type": "Parallel",
+      "Branches": [
+        {
+          "StartAt": "DataQualityChecks",
+          "States": {
+            "DataQualityChecks": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::glue:startJobRun.sync",
+              "Parameters": {
+                "JobName": "advisory-data-quality-checker",
+                "Arguments": {
+                  "--input_path.$": "$.input_path",
+                  "--vendor.$": "$.vendor",
+                  "--config_path.$": "$.config_path"
+                }
+              },
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "ReconciliationCheck",
+          "States": {
+            "ReconciliationCheck": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "advisory-etl-reconciliation",
+                "Payload": {
+                  "input_path.$": "$.input_path",
+                  "vendor.$": "$.vendor",
+                  "file_name.$": "$.file_name"
+                }
+              },
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "PerformanceCalculationValidation",
+          "States": {
+            "PerformanceCalculationValidation": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "advisory-etl-performance-validator",
+                "Payload": {
+                  "input_path.$": "$.input_path",
+                  "vendor.$": "$.vendor",
+                  "file_name.$": "$.file_name"
+                }
+              },
+              "End": true
+            }
+          }
+        }
+      ],
+      "ResultPath": "$.validation_results",
+      "Next": "EvaluateValidationResults",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "HandleError",
+          "ResultPath": "$.error"
+        }
+      ]
+    },
+    
+    "EvaluateValidationResults": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "advisory-etl-result-evaluator",
+        "Payload": {
+          "validation_results.$": "$.validation_results",
+          "etl_result.$": "$.etl_result",
+          "file_name.$": "$.file_name",
+          "vendor.$": "$.vendor"
+        }
+      },
+      "ResultPath": "$.evaluation",
+      "Next": "CheckOverallSuccess"
+    },
+    
+    "CheckOverallSuccess": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.evaluation.Payload.overall_status",
+          "StringEquals": "SUCCESS",
+          "Next": "UpdateDatabaseStatus"
+        },
+        {
+          "Variable": "$.evaluation.Payload.overall_status",
+          "StringEquals": "WARNING",
+          "Next": "UpdateDatabaseStatusWithWarnings"
+        }
+      ],
+      "Default": "ProcessingFailed"
+    },
+    
+    "UpdateDatabaseStatus": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "advisory-etl-database-updater",
+        "Payload": {
+          "file_name.$": "$.file_name",
+          "vendor.$": "$.vendor",
+          "status": "COMPLETED",
+          "results.$": "$.evaluation.Payload"
+        }
+      },
+      "ResultPath": "$.database_update",
+      "Next": "ArchiveSuccessFile"
+    },
+    
+    "UpdateDatabaseStatusWithWarnings": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "advisory-etl-database-updater",
+        "Payload": {
+          "file_name.$": "$.file_name",
+          "vendor.$": "$.vendor",
+          "status": "COMPLETED_WITH_WARNINGS",
+          "results.$": "$.evaluation.Payload"
+        }
+      },
+      "ResultPath": "$.database_update",
+      "Next": "SendWarningNotification"
+    },
+    
+    "SendWarningNotification": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "advisory-etl-notification",
+        "Payload": {
+          "message": "ETL completed with warnings",
+          "details.$": "$.evaluation.Payload.warnings",
+          "severity": "WARNING",
+          "file_name.$": "$.file_name"
+        }
+      },
+      "Next": "ArchiveSuccessFile"
+    },
+    
+    "ProcessingFailed": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "advisory-etl-database-updater",
+        "Payload": {
+          "file_name.$": "$.file_name",
+          "vendor.$": "$.vendor",
+          "status": "FAILED",
+          "results.$": "$.evaluation.Payload"
+        }
+      },
+      "ResultPath": "$.database_update",
+      "Next": "SendErrorNotification"
+    },
+    
+    "SendErrorNotification": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "advisory-etl-notification",
+        "Payload": {
+          "message": "ETL processing failed",
+          "details.$": "$.evaluation.Payload.errors",
+          "severity": "ERROR",
+          "file_name.$": "$.file_name"
+        }
+      },
+      "Next": "ArchiveErrorFile"
+    },
+    
+    "ArchiveSuccessFile": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "advisory-etl-file-manager",
+        "Payload": {
+          "action": "archive_success",
+          "file_path.$": "$.input_path",
+          "file_name.$": "$.file_name",
+          "vendor.$": "$.vendor"
+        }
+      },
+      "ResultPath": "$.archive_result",
+      "Next": "SendSuccessNotification"
+    },
+    
+    "ArchiveErrorFile": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "advisory-etl-file-manager",
+        "Payload": {
+          "action": "archive_error",
+          "file_path.$": "$.input_path",
+          "file_name.$": "$.file_name",
+          "vendor.$": "$.vendor",
+          "error_details.$": "$.error"
+        }
+      },
+      "ResultPath": "$.archive_result",
+      "End": true
+    },
+    
+    "SendSuccessNotification": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "advisory-etl-notification",
+        "Payload": {
+          "message": "ETL processing completed successfully",
+          "details": {
+            "file_name.$": "$.file_name",
+            "vendor.$": "$.vendor",
+            "records_processed.$": "$.evaluation.Payload.total_records",
+            "processing_time.$": "$.evaluation.Payload.processing_duration"
+          },
+          "severity": "INFO"
+        }
+      },
+      "Next": "TriggerDownstreamProcesses"
+    },
+    
+    "TriggerDownstreamProcesses": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "advisory-etl-downstream-trigger",
+        "Payload": {
+          "file_name.$": "$.file_name",
+          "vendor.$": "$.vendor",
+          "processing_results.$": "$.evaluation.Payload"
+        }
+      },
+      "ResultPath": "$.downstream_result",
+      "End": true
+    },
+    
+    "HandleError": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "advisory-etl-error-handler",
+        "Payload": {
+          "error.$": "$.error",
+          "input.$": "$",
+          "timestamp.$": "$$.State.EnteredTime"
+        }
+      },
+      "Next": "ArchiveErrorFile"
+    }
+  }
+}

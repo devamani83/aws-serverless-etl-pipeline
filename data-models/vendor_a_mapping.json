@@ -1,0 +1,55 @@
+{
+  "source_schema": {
+    "account_id": "varchar",
+    "account_name": "varchar", 
+    "portfolio_id": "varchar",
+    "as_of_date": "date",
+    "beginning_market_value": "decimal",
+    "contributions": "decimal",
+    "distributions": "decimal",
+    "income": "decimal",
+    "appreciation": "decimal",
+    "fees": "decimal",
+    "other_adjustments": "decimal",
+    "ending_market_value": "decimal",
+    "benchmark_return": "decimal",
+    "vendor_twrr": "decimal"
+  },
+  "field_mappings": {
+    "account_id": ["account_id", "acct_id", "account_number"],
+    "account_name": ["account_name", "acct_name", "account_desc"],
+    "portfolio_id": ["portfolio_id", "port_id", "portfolio_number"],
+    "as_of_date": ["as_of_date", "report_date", "date"],
+    "beginning_market_value": ["beginning_mv", "start_value", "bmv"],
+    "contributions": ["contributions", "deposits", "cash_in"],
+    "distributions": ["distributions", "withdrawals", "cash_out"],
+    "income": ["income", "dividend", "interest"],
+    "appreciation": ["appreciation", "unrealized_gl", "price_change"],
+    "fees": ["fees", "expenses", "management_fee"],
+    "other_adjustments": ["adjustments", "other", "misc"],
+    "ending_market_value": ["ending_mv", "end_value", "emv"],
+    "benchmark_return": ["benchmark", "index_return", "bmk_return"],
+    "vendor_twrr": ["twrr", "time_weighted_return", "twr"]
+  },
+  "data_types": {
+    "account_id": "string",
+    "account_name": "string",
+    "portfolio_id": "string", 
+    "as_of_date": "date",
+    "beginning_market_value": "double",
+    "contributions": "double",
+    "distributions": "double",
+    "income": "double",
+    "appreciation": "double",
+    "fees": "double",
+    "other_adjustments": "double",
+    "ending_market_value": "double",
+    "benchmark_return": "double",
+    "vendor_twrr": "double"
+  },
+  "validation_rules": {
+    "required_fields": ["account_id", "as_of_date", "beginning_market_value", "ending_market_value"],
+    "numeric_fields": ["beginning_market_value", "contributions", "distributions", "income", "appreciation", "fees", "other_adjustments", "ending_market_value", "benchmark_return", "vendor_twrr"],
+    "date_formats": ["YYYY-MM-DD", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD"]
+  }
+}

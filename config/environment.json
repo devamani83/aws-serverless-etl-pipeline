@@ -1,0 +1,55 @@
+{
+  "environment": "production",
+  "aws_region": "us-east-1",
+  "project_name": "advisory-performance-etl",
+  "database": {
+    "host": "${DB_HOST}",
+    "port": 5432,
+    "database": "advisory_performance",
+    "username": "${DB_USERNAME}",
+    "password_secret_name": "advisory-etl/db-password"
+  },
+  "s3": {
+    "raw_data_bucket": "advisory-etl-raw-data",
+    "processed_data_bucket": "advisory-etl-processed-data",
+    "temp_bucket": "advisory-etl-temp",
+    "archive_bucket": "advisory-etl-archive"
+  },
+  "glue": {
+    "database_name": "advisory_performance_catalog",
+    "temp_dir": "s3://advisory-etl-temp/glue-temp/",
+    "spark_config": {
+      "spark.sql.adaptive.enabled": "true",
+      "spark.sql.adaptive.coalescePartitions.enabled": "true",
+      "spark.sql.adaptive.skewJoin.enabled": "true",
+      "spark.sql.adaptive.localShuffleReader.enabled": "true"
+    }
+  },
+  "vendors": {
+    "vendor_a": {
+      "name": "Vendor A",
+      "file_pattern": "vendor_a_*.csv",
+      "schema_mapping": "vendor_a_mapping.json"
+    },
+    "vendor_b": {
+      "name": "Vendor B", 
+      "file_pattern": "vendor_b_*.xlsx",
+      "schema_mapping": "vendor_b_mapping.json"
+    },
+    "vendor_c": {
+      "name": "Vendor C",
+      "file_pattern": "vendor_c_*.json",
+      "schema_mapping": "vendor_c_mapping.json"
+    }
+  },
+  "tolerance_thresholds": {
+    "twrr_tolerance": 0.0001,
+    "market_value_tolerance": 0.01,
+    "netflow_tolerance": 0.01
+  },
+  "batch_processing": {
+    "max_records_per_batch": 10000,
+    "parallel_workers": 4,
+    "retry_attempts": 3
+  }
+}

@@ -1,0 +1,1431 @@
+{panel:title=Advisory Performance ETL Pipeline - Project Documentation|borderStyle=solid|borderColor=#ccc|titleBGColor=#f7f7f7|bgColor=#ffffff}
+
+This document provides comprehensive documentation for the AWS serverless ETL pipeline designed to process multi-vendor advisory performance data with high accuracy, scalability, and reliability.
+
+{info:title=Quick Navigation}
+Use the table of contents below to navigate to specific sections of this documentation.
+{info}
+
+{panel}
+
+h1. Table of Contents
+
+{toc:printable=true|style=square|maxLevel=3|minLevel=1|class=bigpink|exclude=Table of Contents|type=list|outline=clear|include=.*}
+
+---
+
+h1. Project Overview
+
+h2. Business Purpose
+
+The Advisory Performance ETL Pipeline is a serverless, cloud-native solution designed to process multi-vendor advisory performance data with high accuracy, scalability, and reliability. The system handles millions of records in production while ensuring data quality and performing complex financial calculations.
+
+h2. Key Features
+
+{panel:bgColor=#e8f5e8}
+* *Multi-vendor data ingestion* with automatic schema detection and mapping
+* *Financial calculations*: Net flow, cumulative net flow, ending market value
+* *Performance metrics*: Time-weighted rate of return (TWRR), cumulative TWRR  
+* *Data quality validation* and tolerance checking
+* *Account reconciliation* with existing records
+* *High-performance database operations* optimized for millions of records
+* *Real-time monitoring* and alerting
+* *Web-based UI* for data visualization and management
+{panel}
+
+h2. Technology Stack
+
+{section:border=true}
+{column:width=33%}
+*Cloud Platform*
+* AWS (Amazon Web Services)
+
+*Compute*
+* AWS Lambda
+* AWS Glue
+
+*Storage*
+* Amazon S3
+* Amazon RDS PostgreSQL
+{column}
+
+{column:width=33%}
+*Orchestration*
+* AWS Step Functions
+
+*Monitoring*
+* Amazon CloudWatch
+
+*Frontend*
+* React.js with Material-UI
+* S3 Static Website Hosting
+* CloudFront CDN
+{column}
+
+{column:width=33%}
+*Backend*
+* Flask API on Lambda
+* API Gateway
+
+*Infrastructure*
+* AWS CDK (Infrastructure as Code)
+
+*Security*
+* AWS Secrets Manager
+* AWS IAM
+* ACM (SSL/TLS Certificates)
+{column}
+{section}
+
+---
+
+h1. Architecture Overview
+
+{panel:title=High-Level Architecture Diagram|borderStyle=solid|borderColor=#0066cc|titleBGColor=#e6f2ff|bgColor=#ffffff}
+
+The following diagram illustrates the overall system architecture:
+
+{code:title=Architecture Diagram (Mermaid)|language=text|borderStyle=solid}
+graph TB
+    subgraph "Data Sources"
+        VA[Vendor A<br/>CSV Files]
+        VB[Vendor B<br/>Excel Files] 
+        VC[Vendor C<br/>JSON Files]
+    end
+    
+    subgraph "AWS Cloud Infrastructure"
+        subgraph "Data Ingestion Layer"
+            S3RAW[S3 Raw Data Bucket]
+            S3PROC[S3 Processing Bucket]
+            S3ARCH[S3 Archive Bucket]
+        end
+        
+        subgraph "Processing Layer"
+            LAMBDA1[Lambda Orchestrator]
+            SF[Step Functions<br/>Workflow]
+            GLUE[AWS Glue<br/>ETL Jobs]
+            LAMBDA2[Lambda Reconciliation<br/>Engine]
+        end
+        
+        subgraph "Data Storage Layer"
+            RDS[(RDS PostgreSQL<br/>Production Database)]
+            S3TEMP[S3 Temp Storage]
+        end
+        
+        subgraph "Monitoring & Security"
+            CW[CloudWatch<br/>Monitoring]
+            SM[Secrets Manager]
+            SNS[SNS Notifications]
+        end
+        
+        subgraph "Application Layer"
+            S3WEB[S3 Static Website<br/>React Frontend]
+            CF[CloudFront CDN<br/>Global Distribution]
+            APIGW[API Gateway<br/>REST API]
+            LAMBDA3[Lambda API Backend<br/>Flask Application]
+        end
+    end
+    
+    subgraph "Users"
+        ANALYST[Data Analysts]
+        OPS[Operations Team]
+        BUSINESS[Business Users]
+    end
+    
+    VA --> S3RAW
+    VB --> S3RAW
+    VC --> S3RAW
+    
+    S3RAW --> LAMBDA1
+    LAMBDA1 --> SF
+    SF --> GLUE
+    SF --> LAMBDA2
+    GLUE --> RDS
+    LAMBDA2 --> RDS
+    
+    GLUE --> S3PROC
+    S3PROC --> S3ARCH
+    
+    RDS --> LAMBDA3
+    LAMBDA3 --> APIGW
+    APIGW --> CF
+    S3WEB --> CF
+    
+    CF --> ANALYST
+    CF --> OPS
+    CF --> BUSINESS
+    
+    CW --> SNS
+    SM --> GLUE
+    SM --> LAMBDA2
+    SM --> LAMBDA3
+{code}
+
+{panel}
+
+h2. Architecture Principles
+
+{note:title=Design Principles}
+# *Serverless-First*: Minimize operational overhead with managed services
+# *Event-Driven*: Reactive processing based on data arrival
+# *Scalable*: Auto-scaling components handle variable workloads
+# *Resilient*: Built-in error handling and retry mechanisms
+# *Secure*: Encryption at rest/transit, least privilege access
+# *Cost-Optimized*: Pay-per-use pricing model
+{note}
+
+---
+
+h1. System Components
+
+h2. Core AWS Services
+
+||Service||Purpose||Configuration||
+|*AWS S3*|Data lake storage and static web hosting|5 buckets: raw, processed, temp, archive, frontend|
+|*AWS CloudFront*|CDN for frontend application|Global edge locations, HTTPS enabled|
+|*AWS Lambda*|Serverless compute for orchestration|Python 3.9, 5-15 min timeout|
+|*AWS Glue*|Large-scale ETL processing|Spark-based, auto-scaling|
+|*AWS Step Functions*|Workflow orchestration|State machine with error handling|
+|*Amazon RDS*|Production PostgreSQL database|Multi-AZ, encrypted, automated backups|
+|*Amazon CloudWatch*|Monitoring and logging|Custom dashboards and alarms|
+|*AWS Secrets Manager*|Credential management|Automatic rotation enabled|
+|*AWS API Gateway*|REST API management|Rate limiting, authentication, CORS|
+
+h2. Custom Components
+
+||Component||Technology||Purpose||
+|*ETL Orchestrator*|Lambda Function|File processing initiation|
+|*Reconciliation Engine*|Lambda Function|Data validation and reconciliation|
+|*Performance Calculator*|Glue Job|Financial calculations (TWRR, etc.)|
+|*Data Quality Checker*|Glue Job|Data validation and quality scoring|
+|*Frontend Application*|React + Material-UI on S3/CloudFront|Static web hosting with CDN|
+|*API Backend*|Flask + API Gateway + Lambda|Serverless REST API|
+
+---
+
+h1. Data Flow Architecture
+
+{panel:title=Data Processing Flow|borderStyle=solid|borderColor=#ff6600|titleBGColor=#fff0e6|bgColor=#ffffff}
+
+{code:title=Data Flow Diagram (Mermaid)|language=text|borderStyle=solid}
+flowchart TD
+    subgraph "Ingestion Phase"
+        A[File Upload to S3] --> B[S3 Event Trigger]
+        B --> C[Lambda Orchestrator]
+        C --> D{Validate File Format}
+        D -->|Valid| E[Move to Processing Folder]
+        D -->|Invalid| F[Move to Error Folder]
+    end
+    
+    subgraph "Processing Phase"
+        E --> G[Start Step Function Workflow]
+        G --> H[Data Profiling Job]
+        H --> I[Main ETL Job]
+        I --> J[Data Quality Checks]
+        J --> K[Reconciliation Engine]
+    end
+    
+    subgraph "Validation Phase"
+        K --> L{Reconciliation Results}
+        L -->|Pass| M[Update Status: COMPLETED]
+        L -->|Fail| N[Update Status: COMPLETED_WITH_ISSUES]
+        L -->|Error| O[Update Status: FAILED]
+    end
+    
+    subgraph "Storage Phase"
+        M --> P[Archive Successful File]
+        N --> Q[Send Warning Notification]
+        O --> R[Archive Error File]
+        Q --> P
+        R --> S[Send Error Notification]
+    end
+    
+    subgraph "Presentation Phase"
+        P --> T[Data Available in UI]
+        T --> U[Generate Reports]
+        U --> V[Business Intelligence]
+    end
+{code}
+
+{panel}
+
+h2. Data Transformation Pipeline
+
+{expand:title=Click to view Data Transformation Details}
+
+The data transformation process consists of several stages:
+
+{panel:bgColor=#f0f8ff}
+*Stage 1: Raw Data Ingestion*
+* CSV Files (Vendor A)
+* Excel Files (Vendor B)
+* JSON Files (Vendor C)
+
+*Stage 2: Normalization*
+* Field mapping & schema validation
+* Data type conversion
+* Data cleansing & validation
+
+*Stage 3: Calculations*
+* Net flow calculation
+* TWRR calculation
+* Cumulative metrics
+
+*Stage 4: Quality Checks*
+* Tolerance checking
+* Account reconciliation
+* Cross-account validation
+
+*Stage 5: Output*
+* PostgreSQL database storage
+* Reconciliation reports
+* Quality alerts
+{panel}
+
+{expand}
+
+---
+
+h1. Process Flow Diagrams
+
+h2. Animated ETL Pipeline Flow
+
+{panel:title=Real-time ETL Processing Animation|borderStyle=solid|borderColor=#ff6600|titleBGColor=#fff3e0|bgColor=#ffffff}
+
+The following animated diagram shows the real-time flow of data through the ETL pipeline with timing and status indicators:
+
+{code:title=Animated ETL Pipeline (Mermaid)|language=text|borderStyle=solid}
+%%{init: {"sequence": {"actorMargin": 50, "width": 150, "height": 65, "boxMargin": 10, "noteMargin": 10, "messageMargin": 35}}}%%
+sequenceDiagram
+    autonumber
+    participant VEN as 📊 Vendor System
+    participant S3R as 🪣 S3 Raw Bucket
+    participant ORG as ⚡ Lambda Orchestrator
+    participant SF as 🔄 Step Functions
+    participant GLU as 🏭 Glue ETL Engine
+    participant REC as 🔍 Reconciliation
+    participant DB as 🗄️ PostgreSQL DB
+    participant MON as 📈 CloudWatch
+    participant UI as 🖥️ Web Interface
+    participant USR as 👤 End User
+    
+    Note over VEN,USR: 🚀 ETL Pipeline Processing Flow
+    
+    VEN->>+S3R: 📤 Upload data file<br/>(CSV/Excel/JSON)
+    Note right of S3R: ⏱️ File detected<br/>Size: 50MB<br/>Format: CSV
+    
+    S3R->>+ORG: 🔔 S3 Event Trigger<br/>(Object Created)
+    Note right of ORG: 🔍 Validating file<br/>⚡ Processing...
+    
+    ORG->>ORG: ✅ File Format Validation<br/>📋 Schema Check
+    ORG->>S3R: 📂 Move to processing/
+    
+    ORG->>+SF: 🎯 Start Workflow<br/>(ETL-Pipeline-v1.0)
+    Note right of SF: 🔄 State Machine<br/>Status: RUNNING
+    
+    SF->>+GLU: 🚀 Launch Data Profiling<br/>(advisory-profiling-job)
+    GLU->>GLU: 📊 Analyze Data Structure<br/>🔢 Count Records: 125,000
+    GLU->>DB: 💾 Save Profiling Results
+    GLU-->>-SF: ✅ Profiling Complete<br/>⏱️ Duration: 2m 30s
+    
+    SF->>+GLU: 🏭 Start Main ETL Job<br/>(advisory-performance-etl)
+    Note right of GLU: 🔄 Processing Records<br/>⚡ Spark Cluster Active<br/>💻 Workers: 4<br/>📈 Progress: 0%
+    
+    loop Data Processing
+        GLU->>GLU: 🔢 Calculate Net Flow<br/>📊 TWRR Computation<br/>📈 Progress: +20%
+        GLU->>MON: 📊 Send Metrics<br/>(Records/sec: 850)
+    end
+    
+    GLU->>DB: 💾 Bulk Insert Performance Data<br/>📝 Records: 125,000<br/>⚡ Upsert Strategy
+    Note right of DB: 📊 Database Stats<br/>✅ Inserted: 120,500<br/>🔄 Updated: 4,500<br/>❌ Failed: 0
+    
+    GLU-->>-SF: ✅ ETL Job Complete<br/>⏱️ Total Duration: 8m 45s<br/>📈 Success Rate: 100%
+    
+    SF->>+REC: 🔍 Start Reconciliation<br/>(tolerance-checking)
+    REC->>DB: 📋 Fetch Processed Data<br/>🔍 Fetch Vendor Data
+    
+    loop Account Reconciliation
+        REC->>REC: ⚖️ Market Value Check<br/>📊 TWRR Variance<br/>✅ Within Tolerance
+        REC->>MON: 📊 Quality Metrics<br/>(Pass Rate: 98.5%)
+    end
+    
+    REC->>DB: 💾 Save Reconciliation Results<br/>📊 Pass Rate: 98.5%
+    REC-->>-SF: ✅ Reconciliation Complete<br/>🎯 Status: PASSED
+    
+    SF->>S3R: 📦 Archive Processed File<br/>📂 Move to archive/
+    SF->>MON: 📊 Pipeline Metrics<br/>✅ Status: SUCCESS
+    SF-->>-ORG: ✅ Workflow Complete<br/>⏱️ Total Time: 12m 15s
+    
+    ORG->>MON: 📈 Send Success Notification<br/>📊 Update Dashboard
+    ORG-->>-S3R: ✅ Processing Complete
+    
+    USR->>+UI: 🖱️ Access Dashboard<br/>📊 View Results
+    UI->>DB: 🔍 Query Latest Data<br/>📅 Date Range Filter
+    DB-->>UI: 📊 Return Performance Data<br/>📈 125,000 records
+    UI-->>-USR: 📊 Display Results<br/>✅ Data Quality: 98.5%<br/>⏱️ Last Updated: Just now
+    
+    Note over VEN,USR: 🎉 Pipeline Processing Complete!<br/>⏱️ Total Processing Time: 12m 15s<br/>📊 Data Quality Score: 98.5%<br/>✅ All Systems Operational
+{code}
+
+{panel}
+
+h2. File Processing Workflow
+
+{panel:title=End-to-End Processing Sequence|borderStyle=solid|borderColor=#009900|titleBGColor=#e6ffe6|bgColor=#ffffff}
+
+{code:title=Processing Sequence Diagram (Mermaid)|language=text|borderStyle=solid}
+sequenceDiagram
+    participant U as User/System
+    participant S3 as S3 Bucket
+    participant L1 as Lambda Orchestrator
+    participant SF as Step Functions
+    participant G as Glue ETL Job
+    participant L2 as Reconciliation Lambda
+    participant DB as PostgreSQL DB
+    participant UI as Web UI
+    
+    U->>S3: Upload data file
+    S3->>L1: S3 Event notification
+    L1->>L1: Validate file format
+    L1->>S3: Move to processing folder
+    L1->>SF: Start workflow execution
+    
+    SF->>G: Start data profiling
+    G->>DB: Save profiling results
+    G-->>SF: Profiling complete
+    
+    SF->>G: Start main ETL job
+    G->>G: Process data & calculate metrics
+    G->>DB: Insert/update performance data
+    G-->>SF: ETL complete
+    
+    SF->>L2: Start reconciliation
+    L2->>DB: Retrieve processed data
+    L2->>L2: Perform reconciliation checks
+    L2->>DB: Save reconciliation results
+    L2-->>SF: Reconciliation complete
+    
+    SF->>S3: Archive processed file
+    SF->>UI: Notify completion
+    
+    UI->>DB: Query results for display
+    DB-->>UI: Return data
+{code}
+
+{panel}
+
+h2. Real-time File Status Animation
+
+{panel:title=File Status State Machine|borderStyle=solid|borderColor=#9c27b0|titleBGColor=#f3e5f5|bgColor=#ffffff}
+
+This animated state diagram shows how files transition through different processing states with real-time status updates:
+
+{code:title=Animated File Status Flow (Mermaid)|language=text|borderStyle=solid}
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#ff6600", "primaryTextColor": "#000", "primaryBorderColor": "#ff6600", "lineColor": "#ff6600"}}}%%
+stateDiagram-v2
+    [*] --> UPLOADED : 📤 File arrives in S3<br/>⏱️ 09:15:30 AM
+    
+    UPLOADED --> VALIDATING : 🔍 Lambda triggered<br/>⚡ Format check
+    
+    VALIDATING --> PROCESSING : ✅ Validation passed<br/>📋 Schema valid<br/>⏱️ 09:15:45 AM
+    VALIDATING --> REJECTED : ❌ Validation failed<br/>💀 Invalid format
+    
+    PROCESSING --> PROFILING : 🚀 Step Function started<br/>📊 Data profiling
+    
+    PROFILING --> ETL_RUNNING : 📈 Profile complete<br/>🏭 ETL job launched<br/>⏱️ 09:18:15 AM
+    
+    ETL_RUNNING --> CALCULATING : 🔢 Data loaded<br/>💱 Financial calculations
+    
+    CALCULATING --> RECONCILING : ✅ Calculations done<br/>🔍 Starting reconciliation<br/>⏱️ 09:26:00 AM
+    
+    RECONCILING --> COMPLETED : ✅ Reconciliation passed<br/>📊 Quality: 98.5%<br/>⏱️ 09:27:30 AM
+    RECONCILING --> COMPLETED_WITH_ISSUES : ⚠️ Quality issues found<br/>📊 Quality: 92.1%
+    RECONCILING --> FAILED : ❌ Critical errors<br/>🚨 Manual review needed
+    
+    COMPLETED --> ARCHIVED : 📦 File archived<br/>🎉 Processing complete<br/>⏱️ 09:28:00 AM
+    COMPLETED_WITH_ISSUES --> ARCHIVED : 📦 File archived<br/>⚠️ With warnings
+    
+    REJECTED --> QUARANTINED : 🔒 Moved to error folder<br/>📧 Alert sent
+    FAILED --> QUARANTINED : 🔒 Manual intervention<br/>📞 On-call notified
+    
+    ARCHIVED --> [*] : ✅ Pipeline complete
+    QUARANTINED --> [*] : 🛑 Process terminated
+    
+    note right of VALIDATING : 🔍 Checks:<br/>• File format<br/>• Size limits<br/>• Schema structure
+    
+    note right of ETL_RUNNING : 🏭 Processing:<br/>• Data cleansing<br/>• Type conversion<br/>• Field mapping
+    
+    note right of CALCULATING : 🔢 Computations:<br/>• Net flow<br/>• TWRR calculation<br/>• Cumulative metrics
+    
+    note right of RECONCILING : ⚖️ Validation:<br/>• Tolerance checking<br/>• Cross-account validation<br/>• Quality scoring
+{code}
+
+{panel}
+
+h2. Interactive Processing Dashboard
+
+{panel:title=Real-time Pipeline Monitoring|borderStyle=solid|borderColor=#2196f3|titleBGColor=#e3f2fd|bgColor=#ffffff}
+
+This represents the real-time monitoring dashboard showing live pipeline activity:
+
+{code:title=Pipeline Monitoring Flow (Mermaid)|language=text|borderStyle=solid}
+%%{init: {"flowchart": {"curve": "cardinalClosed"}}}%%
+flowchart TD
+    subgraph MONITOR["📊 Real-time Monitoring Dashboard"]
+        DASH["🖥️ Main Dashboard<br/>📈 Live Metrics"]
+        ALERTS["🚨 Alert System<br/>📧 Notifications"]
+        LOGS["📝 Log Aggregation<br/>🔍 Search & Filter"]
+    end
+    
+    subgraph PIPELINE["🏭 ETL Pipeline Components"]
+        S3["🪣 S3 Buckets<br/>📊 File Count: 1,247<br/>📈 Growth: +15/day"]
+        LAMBDA["⚡ Lambda Functions<br/>🔥 Invocations: 2,341/day<br/>⏱️ Avg Duration: 2.3s"]
+        GLUE["🏭 Glue Jobs<br/>🚀 Active Jobs: 3<br/>📊 Success Rate: 99.2%"]
+        RDS["🗄️ PostgreSQL DB<br/>📈 Records: 12.5M<br/>💾 Size: 850GB"]
+    end
+    
+    subgraph METRICS["📊 Live Metrics Stream"]
+        M1["📈 Throughput<br/>🔢 850 records/sec"]
+        M2["⏱️ Latency<br/>🚀 Avg: 12.3 min"]
+        M3["✅ Success Rate<br/>🎯 99.2%"]
+        M4["💰 Cost<br/>💵 $247.83/day"]
+    end
+    
+    subgraph STATUS["🚦 Current Status"]
+        GREEN["🟢 HEALTHY<br/>All systems operational"]
+        YELLOW["🟡 WARNING<br/>High memory usage"]
+        RED["🔴 CRITICAL<br/>Job failure detected"]
+    end
+    
+    S3 --> M1
+    LAMBDA --> M2
+    GLUE --> M3
+    RDS --> M4
+    
+    M1 --> DASH
+    M2 --> DASH
+    M3 --> DASH
+    M4 --> DASH
+    
+    DASH --> STATUS
+    
+    STATUS --> ALERTS
+    ALERTS --> LOGS
+    
+    GREEN -.-> |Auto-refresh every 30s| DASH
+    YELLOW -.-> |Send warning notification| ALERTS
+    RED -.-> |Page on-call engineer| ALERTS
+    
+    classDef healthy fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#fff
+    classDef warning fill:#ff9800,stroke:#ef6c00,stroke-width:2px,color:#fff
+    classDef critical fill:#f44336,stroke:#c62828,stroke-width:2px,color:#fff
+    classDef metrics fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#fff
+    classDef components fill:#9c27b0,stroke:#6a1b9a,stroke-width:2px,color:#fff
+    
+    class GREEN healthy
+    class YELLOW warning
+    class RED critical
+    class M1,M2,M3,M4 metrics
+    class S3,LAMBDA,GLUE,RDS components
+{code}
+
+{panel}
+
+h2. Data Quality Validation Process
+
+{expand:title=View Data Quality Process Flow}
+
+{code:title=Data Quality Flow|language=text}
+flowchart TD
+    A[Raw Data Input] --> B[Schema Validation]
+    B --> C{Schema Valid?}
+    C -->|No| D[Log Schema Error]
+    C -->|Yes| E[Data Type Validation]
+    E --> F{Types Valid?}
+    F -->|No| G[Log Type Error]
+    F -->|Yes| H[Business Rule Validation]
+    H --> I{Rules Pass?}
+    I -->|No| J[Log Business Rule Error]
+    I -->|Yes| K[Calculate Financial Metrics]
+    K --> L[Tolerance Checking]
+    L --> M{Within Tolerance?}
+    M -->|No| N[Flag Tolerance Violation]
+    M -->|Yes| O[Cross-Account Validation]
+    O --> P{Validation Pass?}
+    P -->|No| Q[Log Validation Warning]
+    P -->|Yes| R[Mark as High Quality]
+    
+    D --> S[Generate Quality Report]
+    G --> S
+    J --> S
+    N --> S
+    Q --> S
+    R --> S
+    S --> T[Update Quality Score]
+    T --> U[Store in Database]
+{code}
+
+{expand}
+
+h2. Reconciliation Process Flow
+
+{tip:title=Reconciliation Overview}
+The reconciliation process validates calculated values against vendor-provided values to ensure data accuracy and identify potential issues.
+{tip}
+
+{code:title=Reconciliation Process|language=text}
+graph TD
+    A[Start Reconciliation] --> B[Retrieve Processed Data]
+    B --> C[For Each Account Record]
+    C --> D[Market Value Reconciliation]
+    D --> E[TWRR Reconciliation]
+    E --> F[Net Flow Reconciliation]
+    F --> G{More Records?}
+    G -->|Yes| C
+    G -->|No| H[Cross-Account Validation]
+    H --> I[Portfolio Consistency Check]
+    I --> J[Outlier Detection]
+    J --> K[Generate Reconciliation Report]
+    K --> L[Calculate Pass Rate]
+    L --> M{Pass Rate > 95%?}
+    M -->|Yes| N[Status: COMPLETED]
+    M -->|No| O[Status: COMPLETED_WITH_ISSUES]
+    N --> P[Archive File]
+    O --> Q[Send Alert]
+    Q --> P
+    P --> R[Update Database Status]
+    R --> S[End Process]
+{code}
+
+h2. Animated Error Handling & Recovery
+
+{panel:title=Pipeline Error Handling Animation|borderStyle=solid|borderColor=#f44336|titleBGColor=#ffebee|bgColor=#ffffff}
+
+This animated sequence shows how the pipeline handles errors, retries, and recovery scenarios:
+
+{code:title=Error Handling Sequence (Mermaid)|language=text|borderStyle=solid}
+%%{init: {"sequence": {"actorMargin": 50, "width": 150, "height": 65, "boxMargin": 10, "noteMargin": 10, "messageMargin": 35}}}%%
+sequenceDiagram
+    autonumber
+    participant FILE as 📄 Incoming File
+    participant S3 as 🪣 S3 Bucket
+    participant ORG as ⚡ Orchestrator
+    participant SF as 🔄 Step Functions
+    participant GLU as 🏭 Glue Job
+    participant DLQ as ☠️ Dead Letter Queue
+    participant SNS as 📢 SNS Alerts
+    participant OPS as 👨‍💻 Operations Team
+    participant MON as 📊 CloudWatch
+    
+    Note over FILE,MON: 🚨 Error Scenario: Processing Failure
+    
+    FILE->>+S3: 📤 Upload corrupted file<br/>💀 Missing headers
+    S3->>+ORG: 🔔 Trigger Lambda
+    
+    ORG->>ORG: 🔍 Validate file format
+    Note right of ORG: ❌ Validation Failed<br/>💀 Schema mismatch<br/>🚨 Error detected
+    
+    ORG->>S3: 📂 Move to error/ folder
+    ORG->>SNS: 🚨 Send validation error alert
+    ORG->>MON: 📊 Log error metrics
+    SNS->>OPS: 📧 Email: File validation failed<br/>📱 Slack notification
+    
+    Note over FILE,MON: 🔄 Retry Scenario: Transient Failure
+    
+    FILE->>+S3: 📤 Upload valid file
+    S3->>+ORG: 🔔 Trigger Lambda
+    ORG->>ORG: ✅ Validation passed
+    ORG->>+SF: 🚀 Start Step Function
+    
+    SF->>+GLU: 🏭 Launch ETL job
+    GLU->>GLU: 💀 Memory error<br/>🚨 Job crashed
+    GLU-->>-SF: ❌ Job failed
+    
+    Note right of SF: 🔄 Retry Logic<br/>⏱️ Attempt 1/3<br/>⏳ Wait 2 minutes
+    
+    SF->>SF: ⏳ Exponential backoff
+    SF->>+GLU: 🔄 Retry ETL job<br/>📈 Increased memory
+    GLU->>GLU: 💀 Network timeout<br/>🚨 AWS service issue
+    GLU-->>-SF: ❌ Job failed again
+    
+    Note right of SF: 🔄 Retry Logic<br/>⏱️ Attempt 2/3<br/>⏳ Wait 4 minutes
+    
+    SF->>SF: ⏳ Exponential backoff
+    SF->>+GLU: 🔄 Final retry<br/>⚡ Max resources
+    GLU->>GLU: ✅ Processing successful<br/>🎉 Recovery complete
+    GLU-->>-SF: ✅ Job completed
+    
+    SF->>MON: 📊 Success after retry<br/>📈 Update metrics
+    SF-->>-ORG: ✅ Workflow complete
+    
+    Note over FILE,MON: 💀 Critical Failure Scenario
+    
+    FILE->>+S3: 📤 Upload massive file<br/>💀 500GB size
+    S3->>+ORG: 🔔 Trigger Lambda
+    ORG->>+SF: 🚀 Start workflow
+    SF->>+GLU: 🏭 Launch ETL job
+    
+    loop 3 retry attempts
+        GLU->>GLU: 💀 Out of memory<br/>🚨 Resource exhaustion
+        GLU-->>SF: ❌ Job failed
+        SF->>SF: ⏳ Wait and retry
+        SF->>GLU: 🔄 Retry with more resources
+    end
+    
+    Note right of SF: 💀 Max retries exceeded<br/>🚨 Critical failure
+    
+    SF->>DLQ: ☠️ Send to dead letter queue<br/>💀 Manual intervention needed
+    SF->>SNS: 🚨 Critical alert<br/>📞 Page on-call engineer
+    SF->>MON: 📊 Log critical failure
+    
+    SNS->>OPS: 📞 Page: Critical ETL failure<br/>🚨 Immediate action required
+    
+    OPS->>DLQ: 🔍 Investigate failed message
+    OPS->>GLU: 🔧 Manual job configuration
+    OPS->>SNS: 📧 Update: Issue resolved<br/>✅ Processing resumed
+    
+    Note over FILE,MON: 🎯 Monitoring & Alerting
+    
+    MON->>MON: 📊 Analyze failure patterns<br/>📈 Track error rates
+    MON->>SNS: 🚨 Threshold alerts<br/>📊 Anomaly detection
+    SNS->>OPS: 📧 Weekly failure report<br/>📈 Trend analysis
+{code}
+
+{panel}
+
+h2. Performance Metrics Animation
+
+{panel:title=Live Performance Dashboard|borderStyle=solid|borderColor=#4caf50|titleBGColor=#e8f5e8|bgColor=#ffffff}
+
+This animated dashboard shows real-time performance metrics and system health:
+
+{code:title=Performance Metrics Flow (Mermaid)|language=text|borderStyle=solid}
+%%{init: {"gitgraph": {"theme": "base", "themeVariables": {"primaryColor": "#4caf50"}}}}%%
+gitgraph
+    commit id: "🚀 Pipeline Start"
+    commit id: "📊 File Ingestion: 1.2k/hr"
+    branch performance-monitoring
+    commit id: "⚡ Processing Speed: 850 rec/sec"
+    commit id: "📈 Memory Usage: 65%"
+    commit id: "🔄 CPU Utilization: 78%"
+    checkout main
+    commit id: "✅ Data Quality: 98.5%"
+    merge performance-monitoring
+    commit id: "💰 Cost Optimization: -12%"
+    commit id: "🎯 SLA Met: 99.2% uptime"
+    commit id: "📊 Pipeline Complete"
+{code}
+
+{panel}
+
+---
+
+h1. Database Schema
+
+h2. Entity Relationship Diagram
+
+{panel:title=Database Schema|borderStyle=solid|borderColor=#800080|titleBGColor=#f5e6ff|bgColor=#ffffff}
+
+{code:title=ERD (Mermaid)|language=text|borderStyle=solid}
+erDiagram
+    ACCOUNTS ||--o{ PERFORMANCE_DATA : "has"
+    PERFORMANCE_DATA ||--o{ RECONCILIATION_RESULTS : "generates"
+    ETL_PROCESSING_LOG ||--o{ DATA_QUALITY_ISSUES : "tracks"
+    
+    ACCOUNTS {
+        varchar account_id PK
+        varchar account_name
+        varchar portfolio_id
+        varchar client_id
+        varchar account_type
+        date inception_date
+        varchar status
+        timestamp created_at
+        timestamp updated_at
+    }
+    
+    PERFORMANCE_DATA {
+        uuid id PK
+        varchar account_id FK
+        date as_of_date
+        decimal beginning_market_value
+        decimal contributions
+        decimal distributions
+        decimal income
+        decimal appreciation
+        decimal fees
+        decimal other_adjustments
+        decimal ending_market_value
+        decimal net_flow
+        decimal cumulative_net_flow
+        decimal calculated_twrr
+        decimal cumulative_twrr
+        decimal vendor_twrr
+        decimal benchmark_return
+        boolean twrr_tolerance_check
+        decimal twrr_variance
+        varchar reconciliation_status
+        varchar data_source
+        varchar file_name
+        timestamp created_at
+        timestamp updated_at
+        varchar processed_by
+    }
+    
+    RECONCILIATION_RESULTS {
+        uuid id PK
+        varchar account_id
+        date as_of_date
+        varchar field_name
+        decimal calculated_value
+        decimal vendor_value
+        decimal variance
+        decimal tolerance_threshold
+        boolean within_tolerance
+        timestamp reconciliation_date
+        text notes
+    }
+    
+    ETL_PROCESSING_LOG {
+        uuid id PK
+        varchar file_name
+        varchar file_path
+        varchar vendor
+        timestamp processing_start_time
+        timestamp processing_end_time
+        integer records_processed
+        integer records_inserted
+        integer records_updated
+        integer records_failed
+        varchar status
+        text error_message
+        timestamp created_at
+    }
+    
+    DATA_QUALITY_ISSUES {
+        uuid id PK
+        uuid etl_log_id FK
+        varchar account_id
+        date as_of_date
+        varchar issue_type
+        text issue_description
+        varchar field_name
+        varchar expected_value
+        varchar actual_value
+        varchar severity
+        timestamp created_at
+    }
+{code}
+
+{panel}
+
+h2. Key Database Features
+
+{section:border=true}
+{column:width=50%}
+*Performance Optimizations*
+* Partitioning by date
+* Strategic indexing
+* Materialized views
+* Query optimization
+
+*Data Integrity*
+* Foreign key constraints
+* Data validation triggers
+* Audit trails
+* Backup and recovery
+{column}
+
+{column:width=50%}
+*Scalability Features*
+* Table partitioning
+* Connection pooling
+* Read replicas
+* Auto-scaling storage
+
+*Operational Features*
+* Automated maintenance
+* Performance monitoring
+* Capacity planning
+* Disaster recovery
+{column}
+{section}
+
+---
+
+h1. API Documentation
+
+h2. REST API Endpoints
+
+||Endpoint||Method||Purpose||Parameters||
+|{{/api/vendors}}|GET|List all vendors|-|
+|{{/api/vendors/{vendor}/files}}|GET|Get files for vendor|vendor, status, date_range|
+|{{/api/files/{file_id}/details}}|GET|Get file processing details|file_id|
+|{{/api/files/{file_id}/data}}|GET|Get processed data|file_id, page, limit|
+|{{/api/reconciliation/{file_id}}}|GET|Get reconciliation results|file_id|
+|{{/api/accounts/{account_id}}}|GET|Get account details|account_id, date_range|
+|{{/api/dashboard/summary}}|GET|Get dashboard metrics|date_range|
+|{{/api/quality/score}}|GET|Get data quality metrics|vendor, date_range|
+
+h2. API Response Format
+
+{code:title=Standard API Response|language=json|borderStyle=solid}
+{
+  "status": "success",
+  "data": {
+    // Response data
+  },
+  "metadata": {
+    "timestamp": "2025-07-08T10:30:00Z",
+    "total_records": 1000,
+    "page": 1,
+    "per_page": 50
+  },
+  "message": "Request processed successfully"
+}
+{code}
+
+---
+
+h1. Operations & Monitoring
+
+h2. Key Performance Indicators
+
+{panel:title=KPI Dashboard|borderStyle=solid|borderColor=#ff0000|titleBGColor=#ffe6e6|bgColor=#ffffff}
+
+||Metric||Target||Threshold||Action||
+|Pipeline Success Rate|>99%|Alert if <95%|Immediate investigation|
+|Data Quality Score|>95%|Alert if <90%|Review data sources|
+|TWRR Reconciliation Pass Rate|>95%|Alert if <90%|Check calculations|
+|Processing Latency|<2 hours|Alert if >4 hours|Scale resources|
+|Database Query Response|<5 seconds|Alert if >10 seconds|Optimize queries|
+|System Availability|>99.9%|Alert if <99%|Escalate to ops team|
+
+{panel}
+
+h2. Monitoring Strategy
+
+{info:title=Monitoring Levels}
+*Level 1: Infrastructure Monitoring*
+* AWS service health
+* Resource utilization
+* Network connectivity
+
+*Level 2: Application Monitoring*
+* ETL job status
+* Data quality metrics
+* API performance
+
+*Level 3: Business Monitoring*
+* Processing volumes
+* Reconciliation rates
+* User activity
+{info}
+
+h2. Alerting Configuration
+
+{warning:title=Alert Severity Levels}
+*Critical Alerts (Immediate Response)*
+* Pipeline failures
+* Data corruption
+* Security incidents
+
+*Warning Alerts (4-hour Response)*
+* Performance degradation
+* Quality issues below threshold
+* Capacity concerns
+
+*Informational Alerts (Next Business Day)*
+* Successful processing notifications
+* Scheduled maintenance alerts
+* Usage reports
+{warning}
+
+---
+
+h1. Troubleshooting
+
+h2. Common Issues and Solutions
+
+{expand:title=Glue Job Issues}
+
+*Symptoms:* Job fails after 48 hours, out of memory errors
+*Root Cause:* Large file size, insufficient resources
+*Solution:* Increase max capacity, optimize Spark configuration
+
+{code:title=Glue Configuration|language=python}
+# Recommended Glue job configuration
+{
+    "MaxCapacity": 20.0,
+    "GlueVersion": "4.0",
+    "DefaultArguments": {
+        "--spark.sql.adaptive.enabled": "true",
+        "--spark.sql.adaptive.coalescePartitions.enabled": "true",
+        "--additional-python-modules": "awswrangler==3.5.2"
+    }
+}
+{code}
+
+{expand}
+
+{expand:title=Lambda Memory Issues}
+
+*Symptoms:* Function timeouts, memory exceeded errors
+*Root Cause:* Large files, complex processing logic
+*Solution:* Increase memory allocation, implement streaming
+
+{code:title=Lambda Configuration|language=json}
+{
+    "MemorySize": 1024,
+    "Timeout": 900,
+    "Environment": {
+        "Variables": {
+            "BATCH_SIZE": "1000"
+        }
+    }
+}
+{code}
+
+{expand}
+
+{expand:title=Database Performance Issues}
+
+*Symptoms:* High CPU utilization, connection pool exhaustion
+*Root Cause:* Inefficient queries, concurrent processing
+*Solution:* Optimize queries, implement connection pooling
+
+{code:title=Database Optimization|language=sql}
+-- Check active queries
+SELECT 
+    pid,
+    now() - pg_stat_activity.query_start AS duration,
+    query 
+FROM pg_stat_activity 
+WHERE (now() - pg_stat_activity.query_start) > interval '5 minutes';
+
+-- Create performance indexes
+CREATE INDEX CONCURRENTLY idx_performance_data_account_date 
+ON performance_data (account_id, as_of_date DESC);
+{code}
+
+{expand}
+
+h2. Diagnostic Commands
+
+{code:title=Useful Diagnostic Commands|language=bash|borderStyle=solid}
+# Check Glue job status
+aws glue get-job-runs --job-name advisory-performance-etl --max-items 5
+
+# Review Lambda logs
+aws logs filter-log-events \
+    --log-group-name /aws/lambda/advisory-etl-orchestrator \
+    --filter-pattern "ERROR"
+
+# Monitor S3 processing
+aws s3 ls s3://advisory-etl-raw-data/processing/ --recursive
+
+# Database connection test
+psql -h $DB_HOST -U $DB_USER -d advisory_performance \
+    -c "SELECT COUNT(*) FROM performance_data WHERE created_at >= CURRENT_DATE;"
+{code}
+
+---
+
+h1. Security & Compliance
+
+h2. Security Framework
+
+{panel:title=Security Controls|borderStyle=solid|borderColor=#cc0000|titleBGColor=#ffe6e6|bgColor=#ffffff}
+
+*Data Protection*
+* Encryption at rest (S3, RDS)
+* Encryption in transit (TLS 1.2+)
+* Data masking for sensitive fields
+* Secure key management
+
+*Access Control*
+* IAM roles with least privilege
+* Multi-factor authentication
+* Regular access reviews
+* Service-to-service authentication
+
+*Network Security*
+* VPC isolation
+* Security groups and NACLs
+* Private subnets for databases
+* VPC endpoints for AWS services
+
+*Monitoring & Auditing*
+* CloudTrail logging
+* GuardDuty threat detection
+* Config compliance monitoring
+* Security incident response
+{panel}
+
+h2. Compliance Requirements
+
+||Requirement||Implementation||Status||
+|Data Privacy (GDPR/CCPA)|Data anonymization, retention policies|✅ Implemented|
+|Financial Regulations (SOX)|Audit trails, access controls|✅ Implemented|
+|Industry Standards (ISO 27001)|Security controls, documentation|🔄 In Progress|
+|Data Retention|Automated lifecycle policies|✅ Implemented|
+
+---
+
+h1. Performance Optimization
+
+h2. Database Optimization Strategies
+
+{tip:title=Performance Tips}
+*Partitioning Strategy*
+* Monthly partitions for performance_data table
+* Automatic partition creation
+* Partition pruning for queries
+
+*Index Optimization*
+* Composite indexes for common query patterns
+* Partial indexes for filtered queries
+* Regular index maintenance and analysis
+
+*Query Optimization*
+* Use of prepared statements
+* Avoiding N+1 query problems
+* Efficient JOIN strategies
+{tip}
+
+{code:title=Database Maintenance|language=sql}
+-- Create monthly partition
+SELECT create_monthly_partition('performance_data', '2025-08-01');
+
+-- Analyze table statistics
+ANALYZE performance_data;
+
+-- Check index usage
+SELECT 
+    indexrelname,
+    idx_scan,
+    idx_tup_read,
+    idx_tup_fetch
+FROM pg_stat_user_indexes 
+WHERE schemaname = 'public'
+ORDER BY idx_scan DESC;
+{code}
+
+h2. ETL Performance Tuning
+
+{section:border=true}
+{column:width=50%}
+*Spark Configuration*
+* Adaptive query execution
+* Dynamic partition coalescing
+* Broadcast join optimization
+* Memory management tuning
+
+*Processing Optimization*
+* Parallel file processing
+* Incremental data loading
+* Data skipping techniques
+* Efficient serialization formats
+{column}
+
+{column:width=50%}
+*Resource Management*
+* Auto-scaling configurations
+* Resource allocation strategies
+* Cost optimization techniques
+* Performance monitoring
+
+*Data Pipeline Optimization*
+* Batch size optimization
+* Checkpoint strategies
+* Error recovery mechanisms
+* Circuit breaker patterns
+{column}
+{section}
+
+---
+
+h1. Deployment Guide
+
+h2. Prerequisites
+
+{note:title=Required Tools and Permissions}
+*Development Environment*
+* AWS CLI configured with appropriate permissions
+* Python 3.9+ and pip
+* Node.js 16+ and npm
+* Git for source control
+
+*AWS Permissions*
+* IAM permissions for CDK deployment
+* S3 bucket creation and management
+* CloudFront distribution management
+* RDS instance creation
+* Lambda and Glue service permissions
+* Route 53 (optional for custom domain)
+{note}
+
+h2. Deployment Steps
+
+{panel:title=Step-by-Step Deployment|borderStyle=solid|borderColor=#0066cc|titleBGColor=#e6f2ff|bgColor=#ffffff}
+
+*Step 1: Repository Setup*
+{code:language=bash}
+git clone <repository-url>
+cd advisory-performance-etl
+{code}
+
+*Step 2: Infrastructure Deployment*
+{code:language=bash}
+./scripts/deploy.sh --environment production --region us-east-1
+{code}
+
+*Step 3: Database Setup*
+{code:language=bash}
+python scripts/setup_database.py
+{code}
+
+*Step 4: Frontend Application Deployment*
+{code:language=bash}
+# Build React application
+cd ui-application/frontend
+npm install
+npm run build
+
+# Deploy to S3 with CloudFront
+aws s3 sync build/ s3://advisory-etl-frontend-bucket --delete
+aws cloudfront create-invalidation --distribution-id E1234567890 --paths "/*"
+{code}
+
+*Step 5: Backend API Deployment*
+{code:language=bash}
+# Deploy Flask API to Lambda
+cd ui-application/backend
+pip install -r requirements.txt
+serverless deploy --stage production
+
+# Or deploy using AWS CDK (recommended)
+cdk deploy AdvisoryETLAPIStack
+{code}
+
+*Step 6: Verification*
+{code:language=bash}
+# Test frontend deployment
+curl https://d1234567890.cloudfront.net
+
+# Test API endpoints
+curl https://api.advisory-etl.example.com/api/health
+
+# Check database connectivity
+python scripts/test_db_connection.py
+
+# Verify S3 bucket creation
+aws s3 ls | grep advisory-etl
+{code}
+
+{panel}
+
+h2. Frontend Application Architecture
+
+{panel:title=S3 Static Website with CloudFront CDN|borderStyle=solid|borderColor=#ff9800|titleBGColor=#fff8e1|bgColor=#ffffff}
+
+The frontend application uses a serverless static website architecture for optimal performance and cost efficiency:
+
+{code:title=Frontend Deployment Architecture (Mermaid)|language=text|borderStyle=solid}
+graph TB
+    subgraph "Frontend Infrastructure"
+        DEV[👨‍💻 Developer]
+        BUILD[🔨 Build Process<br/>npm run build]
+        S3WEB[🪣 S3 Static Website<br/>advisory-etl-frontend]
+        CF[☁️ CloudFront CDN<br/>Global Edge Locations]
+        R53[🌐 Route 53<br/>DNS Management]
+        CERT[🔒 ACM Certificate<br/>HTTPS/TLS]
+    end
+    
+    subgraph "Backend Services"
+        APIGW[🚪 API Gateway<br/>REST API Endpoints]
+        LAMBDA[⚡ Lambda Functions<br/>Backend Logic]
+        RDS[🗄️ PostgreSQL<br/>Data Storage]
+    end
+    
+    subgraph "Users"
+        USER[👤 End Users<br/>Web Browsers]
+    end
+    
+    DEV --> BUILD
+    BUILD --> S3WEB
+    S3WEB --> CF
+    CERT --> CF
+    R53 --> CF
+    
+    CF --> USER
+    USER --> APIGW
+    APIGW --> LAMBDA
+    LAMBDA --> RDS
+    
+    classDef frontend fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    classDef backend fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    classDef users fill:#e8f5e8,stroke:#388e3c,stroke-width:2px
+    
+    class DEV,BUILD,S3WEB,CF,R53,CERT frontend
+    class APIGW,LAMBDA,RDS backend
+    class USER users
+{code}
+
+*Key Benefits:*
+* *Serverless*: No server management required
+* *Scalable*: Automatic scaling with CloudFront
+* *Fast*: Global CDN edge locations
+* *Secure*: HTTPS/TLS encryption by default
+* *Cost-effective*: Pay only for usage
+* *Reliable*: 99.99% availability SLA
+
+{panel}
+
+h2. Environment Configuration
+
+||Environment||Purpose||Configuration||
+|Development|Local testing and development|Single instance, minimal resources|
+|Staging|Pre-production testing|Production-like setup with test data|
+|Production|Live production system|Multi-AZ, auto-scaling, full monitoring|
+
+h2. S3 Bucket Configuration
+
+{panel:title=S3 Static Website Setup|borderStyle=solid|borderColor=#4caf50|titleBGColor=#e8f5e8|bgColor=#ffffff}
+
+{code:title=S3 Bucket Policy for Static Website|language=json|borderStyle=solid}
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "PublicReadGetObject",
+      "Effect": "Allow",
+      "Principal": "*",
+      "Action": "s3:GetObject",
+      "Resource": "arn:aws:s3:::advisory-etl-frontend/*",
+      "Condition": {
+        "StringEquals": {
+          "AWS:SourceArn": "arn:aws:cloudfront::123456789012:distribution/E1234567890"
+        }
+      }
+    }
+  ]
+}
+{code}
+
+{code:title=CloudFront Distribution Configuration|language=json|borderStyle=solid}
+{
+  "DistributionConfig": {
+    "CallerReference": "advisory-etl-frontend-2025",
+    "Comment": "Advisory ETL Frontend Application",
+    "DefaultRootObject": "index.html",
+    "Origins": [
+      {
+        "Id": "S3-advisory-etl-frontend",
+        "DomainName": "advisory-etl-frontend.s3.amazonaws.com",
+        "S3OriginConfig": {
+          "OriginAccessIdentity": "origin-access-identity/cloudfront/E1234567890"
+        }
+      }
+    ],
+    "DefaultCacheBehavior": {
+      "TargetOriginId": "S3-advisory-etl-frontend",
+      "ViewerProtocolPolicy": "redirect-to-https",
+      "CachePolicyId": "4135ea2d-6df8-44a3-9df3-4b5a84be39ad",
+      "Compress": true
+    },
+    "CustomErrorResponses": [
+      {
+        "ErrorCode": 404,
+        "ResponseCode": 200,
+        "ResponsePagePath": "/index.html"
+      }
+    ],
+    "ViewerCertificate": {
+      "AcmCertificateArn": "arn:aws:acm:us-east-1:123456789012:certificate/12345678-1234-1234-1234-123456789012",
+      "SslSupportMethod": "sni-only",
+      "MinimumProtocolVersion": "TLSv1.2_2021"
+    }
+  }
+}
+{code}
+
+{panel}
+
+---
+
+h1. Future Enhancements
+
+h2. Roadmap Items
+
+{roadmap}
+*Q3 2025*
+* Real-time processing capabilities
+* Enhanced data visualization features
+* Performance optimization phase 2
+
+*Q4 2025*
+* Machine learning integration
+* Advanced anomaly detection
+* Multi-region deployment
+
+*Q1 2026*
+* GraphQL API implementation
+* Enhanced mobile interface
+* Advanced analytics features
+
+*Q2 2026*
+* AI-powered data quality recommendations
+* Automated tolerance adjustment
+* Predictive performance analytics
+{roadmap}
+
+h2. Technical Debt
+
+{warning:title=Areas for Improvement}
+* Refactor legacy data mapping logic
+* Implement comprehensive integration test suite
+* Add performance benchmarking framework
+* Enhance error handling and recovery mechanisms
+* Improve documentation coverage
+* Optimize database query patterns
+{warning}
+
+---
+
+h1. Contact Information
+
+{panel:title=Support Contacts|borderStyle=solid|borderColor=#009900|titleBGColor=#e6ffe6|bgColor=#ffffff}
+
+*Primary Contacts*
+* *Project Owner:* Data Engineering Team
+* *Technical Lead:* [Your Name]
+* *Product Manager:* [PM Name]
+
+*Support Channels*
+* *Email:* etl-support@company.com
+* *Slack:* #data-engineering-alerts
+* *On-Call:* [On-call rotation details]
+
+*Emergency Escalation*
+* *Level 1:* Development Team
+* *Level 2:* Platform Engineering
+* *Level 3:* CTO Office
+
+{panel}
+
+---
+
+{panel:title=Document Information|borderStyle=solid|borderColor=#666666|titleBGColor=#f0f0f0|bgColor=#ffffff}
+
+*Document Version:* 1.0
+*Last Updated:* July 8, 2025
+*Next Review:* August 8, 2025
+*Document Owner:* Data Engineering Team
+
+*Change Log:*
+* v1.0 - Initial documentation creation
+* v0.9 - Draft review and feedback incorporation
+* v0.8 - Technical review and validation
+
+{panel}
