@@ -1,0 +1,259 @@
+name: Database Migration
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to run migration on'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+        - staging
+        - production
+      migration_type:
+        description: 'Type of migration'
+        required: true
+        default: 'schema'
+        type: choice
+        options:
+        - schema
+        - data
+        - rollback
+      confirm_production:
+        description: 'Type "CONFIRM" to run on production'
+        required: false
+        type: string
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  validate-input:
+    name: Validate Migration Input
+    runs-on: ubuntu-latest
+    outputs:
+      can-proceed: ${{ steps.validate.outputs.can-proceed }}
+    
+    steps:
+      - name: Validate production confirmation
+        id: validate
+        run: |
+          if [[ "${{ github.event.inputs.environment }}" == "production" ]]; then
+            if [[ "${{ github.event.inputs.confirm_production }}" != "CONFIRM" ]]; then
+              echo "❌ Production migrations require confirmation. Please type 'CONFIRM' in the confirm_production field."
+              echo "can-proceed=false" >> $GITHUB_OUTPUT
+              exit 1
+            fi
+          fi
+          echo "can-proceed=true" >> $GITHUB_OUTPUT
+
+  backup-database:
+    name: Backup Database
+    runs-on: ubuntu-latest
+    needs: validate-input
+    if: needs.validate-input.outputs.can-proceed == 'true'
+    environment: ${{ github.event.inputs.environment }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          pip install psycopg2-binary boto3
+
+      - name: Get database connection info
+        run: |
+          # Get RDS instance identifier from stack outputs or tags
+          DB_INSTANCE=$(aws rds describe-db-instances \
+            --query "DBInstances[?contains(DBInstanceIdentifier, 'advisory-etl-${{ github.event.inputs.environment }}')].DBInstanceIdentifier" \
+            --output text)
+          echo "DB_INSTANCE=$DB_INSTANCE" >> $GITHUB_ENV
+
+      - name: Create database backup
+        run: |
+          BACKUP_ID="advisory-etl-${{ github.event.inputs.environment }}-$(date +%Y%m%d-%H%M%S)"
+          
+          echo "Creating manual snapshot: $BACKUP_ID"
+          aws rds create-db-snapshot \
+            --db-instance-identifier $DB_INSTANCE \
+            --db-snapshot-identifier $BACKUP_ID
+          
+          echo "Waiting for snapshot to complete..."
+          aws rds wait db-snapshot-completed \
+            --db-snapshot-identifier $BACKUP_ID
+          
+          echo "✅ Backup completed: $BACKUP_ID"
+          echo "BACKUP_ID=$BACKUP_ID" >> $GITHUB_ENV
+
+      - name: Save backup info
+        run: |
+          echo "Database backup completed successfully" > backup-info.txt
+          echo "Backup ID: $BACKUP_ID" >> backup-info.txt
+          echo "Environment: ${{ github.event.inputs.environment }}" >> backup-info.txt
+          echo "Created: $(date)" >> backup-info.txt
+
+      - name: Upload backup info
+        uses: actions/upload-artifact@v3
+        with:
+          name: backup-info-${{ github.event.inputs.environment }}
+          path: backup-info.txt
+          retention-days: 30
+
+  run-migration:
+    name: Run Database Migration
+    runs-on: ubuntu-latest
+    needs: [validate-input, backup-database]
+    if: needs.validate-input.outputs.can-proceed == 'true'
+    environment: ${{ github.event.inputs.environment }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          pip install psycopg2-binary boto3 alembic
+
+      - name: Get database credentials
+        run: |
+          SECRET_ARN=$(aws cloudformation describe-stacks \
+            --stack-name "AdvisoryETLStack-${{ github.event.inputs.environment }}" \
+            --query "Stacks[0].Outputs[?OutputKey=='DatabaseSecretArn'].OutputValue" \
+            --output text)
+          
+          DB_HOST=$(aws cloudformation describe-stacks \
+            --stack-name "AdvisoryETLStack-${{ github.event.inputs.environment }}" \
+            --query "Stacks[0].Outputs[?OutputKey=='DatabaseHost'].OutputValue" \
+            --output text)
+          
+          echo "SECRET_ARN=$SECRET_ARN" >> $GITHUB_ENV
+          echo "DB_HOST=$DB_HOST" >> $GITHUB_ENV
+
+      - name: Run schema migration
+        if: github.event.inputs.migration_type == 'schema'
+        run: |
+          echo "Running schema migration..."
+          export DB_HOST=$DB_HOST
+          export SECRET_ARN=$SECRET_ARN
+          export ENVIRONMENT=${{ github.event.inputs.environment }}
+          
+          python scripts/setup_database.py --migrate-only
+
+      - name: Run data migration
+        if: github.event.inputs.migration_type == 'data'
+        run: |
+          echo "Running data migration..."
+          # Add your data migration logic here
+          python scripts/migrate_data.py --environment ${{ github.event.inputs.environment }}
+
+      - name: Run rollback
+        if: github.event.inputs.migration_type == 'rollback'
+        run: |
+          echo "Running rollback migration..."
+          # Add your rollback logic here
+          python scripts/rollback_migration.py --environment ${{ github.event.inputs.environment }}
+
+  validate-migration:
+    name: Validate Migration
+    runs-on: ubuntu-latest
+    needs: [validate-input, run-migration]
+    if: needs.validate-input.outputs.can-proceed == 'true'
+    environment: ${{ github.event.inputs.environment }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          pip install psycopg2-binary boto3
+
+      - name: Validate database schema
+        run: |
+          echo "Validating database schema..."
+          python scripts/validate_schema.py --environment ${{ github.event.inputs.environment }}
+
+      - name: Run database health check
+        run: |
+          echo "Running database health check..."
+          python scripts/database_health_check.py --environment ${{ github.event.inputs.environment }}
+
+      - name: Test sample queries
+        run: |
+          echo "Testing sample queries..."
+          python scripts/test_database_queries.py --environment ${{ github.event.inputs.environment }}
+
+  notify-migration-complete:
+    name: Notify Migration Complete
+    runs-on: ubuntu-latest
+    needs: [validate-migration]
+    if: always()
+    
+    steps:
+      - name: Send success notification
+        if: needs.validate-migration.result == 'success'
+        run: |
+          echo "✅ Database migration completed successfully!"
+          echo "Environment: ${{ github.event.inputs.environment }}"
+          echo "Migration Type: ${{ github.event.inputs.migration_type }}"
+
+      - name: Send failure notification
+        if: needs.validate-migration.result == 'failure'
+        run: |
+          echo "❌ Database migration failed!"
+          echo "Environment: ${{ github.event.inputs.environment }}"
+          echo "Migration Type: ${{ github.event.inputs.migration_type }}"
+          echo "Please check the logs and consider using the backup to restore if necessary."
+
+      - name: Post to Slack (if configured)
+        if: env.SLACK_WEBHOOK_URL != ''
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          if [ "${{ needs.validate-migration.result }}" == "success" ]; then
+            MESSAGE="✅ Database migration completed successfully on ${{ github.event.inputs.environment }} (Type: ${{ github.event.inputs.migration_type }})"
+          else
+            MESSAGE="❌ Database migration failed on ${{ github.event.inputs.environment }} (Type: ${{ github.event.inputs.migration_type }})"
+          fi
+          
+          curl -X POST -H 'Content-type: application/json' \
+            --data "{\"text\":\"$MESSAGE\"}" \
+            $SLACK_WEBHOOK_URL

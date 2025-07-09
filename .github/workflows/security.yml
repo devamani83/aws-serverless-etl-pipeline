@@ -1,0 +1,185 @@
+name: Security Scan
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    # Run security scan daily at 2 AM UTC
+    - cron: '0 2 * * *'
+
+jobs:
+  security-scan:
+    name: Security Vulnerability Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install safety bandit
+
+      - name: Install Node.js dependencies
+        run: |
+          cd ui-application/frontend
+          npm ci
+
+      - name: Run Python security scan (Safety)
+        run: |
+          safety check --json --output safety-report.json || true
+          safety check
+
+      - name: Run Python security scan (Bandit)
+        run: |
+          bandit -r . -f json -o bandit-report.json || true
+          bandit -r . -ll
+
+      - name: Run Node.js security audit
+        run: |
+          cd ui-application/frontend
+          npm audit --audit-level moderate
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+      - name: Upload security reports
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: security-reports
+          path: |
+            safety-report.json
+            bandit-report.json
+            trivy-results.sarif
+          retention-days: 30
+
+  secret-scan:
+    name: Secret Scanning
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run TruffleHog OSS
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: main
+          head: HEAD
+          extra_args: --debug --only-verified
+
+  infrastructure-security:
+    name: Infrastructure Security
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install CDK
+        run: |
+          npm install -g aws-cdk
+
+      - name: Install Python dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run CDK security scan with cdk-nag
+        run: |
+          cd infrastructure
+          npm install cdk-nag
+          cdk synth --no-staging
+          # Run additional security checks
+          npm install -g checkov
+          checkov -d cdk.out --framework cloudformation
+
+  compliance-check:
+    name: Compliance Check
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check for required files
+        run: |
+          echo "Checking for required compliance files..."
+          files=(
+            ".github/workflows/deploy.yml"
+            "README.md"
+            "requirements.txt"
+            ".gitignore"
+          )
+          
+          for file in "${files[@]}"; do
+            if [ ! -f "$file" ]; then
+              echo "❌ Missing required file: $file"
+              exit 1
+            else
+              echo "✅ Found: $file"
+            fi
+          done
+
+      - name: Check for sensitive information
+        run: |
+          echo "Checking for potential sensitive information..."
+          
+          # Check for hardcoded secrets patterns
+          if grep -r -i "password\|secret\|key\|token" --include="*.py" --include="*.js" --include="*.json" --exclude-dir=".git" .; then
+            echo "⚠️ Potential sensitive information found. Please review."
+          else
+            echo "✅ No obvious sensitive information patterns found."
+          fi
+
+      - name: License compliance check
+        run: |
+          echo "Checking license compliance..."
+          pip install pip-licenses
+          pip-licenses --format=json --output-file=licenses.json
+          
+          # Check for GPL licenses that might require special attention
+          if grep -i "gpl" licenses.json; then
+            echo "⚠️ GPL licenses found. Please review compatibility."
+          else
+            echo "✅ No GPL licenses detected."
+          fi
+
+      - name: Upload compliance reports
+        uses: actions/upload-artifact@v3
+        with:
+          name: compliance-reports
+          path: |
+            licenses.json
+          retention-days: 30

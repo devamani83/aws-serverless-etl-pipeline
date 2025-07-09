@@ -1,0 +1,375 @@
+name: Monitoring and Health Checks
+
+on:
+  schedule:
+    # Run health checks every 15 minutes
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to check'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+        - staging
+        - production
+        - all
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  health-check:
+    name: Health Check
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        environment: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'all' && fromJson('["staging", "production"]') || github.event_name == 'workflow_dispatch' && fromJson(format('["{0}"]', github.event.inputs.environment)) || fromJson('["production"]') }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          pip install boto3 requests psycopg2-binary
+
+      - name: Check API Gateway health
+        id: api-health
+        run: |
+          set +e
+          
+          # Get API Gateway endpoint
+          API_ENDPOINT=$(aws cloudformation describe-stacks \
+            --stack-name "AdvisoryETLStack-${{ matrix.environment }}" \
+            --query "Stacks[0].Outputs[?OutputKey=='APIEndpoint'].OutputValue" \
+            --output text 2>/dev/null)
+          
+          if [ -z "$API_ENDPOINT" ] || [ "$API_ENDPOINT" == "None" ]; then
+            echo "⚠️ Could not retrieve API endpoint for ${{ matrix.environment }}"
+            echo "status=unknown" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          # Test API health endpoint
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${API_ENDPOINT}/health" || echo "000")
+          
+          if [ "$HTTP_STATUS" == "200" ]; then
+            echo "✅ API Gateway is healthy (${{ matrix.environment }})"
+            echo "status=healthy" >> $GITHUB_OUTPUT
+          else
+            echo "❌ API Gateway is unhealthy (${{ matrix.environment }}) - Status: $HTTP_STATUS"
+            echo "status=unhealthy" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Check CloudFront distribution
+        id: cloudfront-health
+        run: |
+          set +e
+          
+          # Get CloudFront distribution domain
+          FRONTEND_URL=$(aws cloudformation describe-stacks \
+            --stack-name "AdvisoryETLStack-${{ matrix.environment }}" \
+            --query "Stacks[0].Outputs[?OutputKey=='FrontendURL'].OutputValue" \
+            --output text 2>/dev/null)
+          
+          if [ -z "$FRONTEND_URL" ] || [ "$FRONTEND_URL" == "None" ]; then
+            echo "⚠️ Could not retrieve frontend URL for ${{ matrix.environment }}"
+            echo "status=unknown" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          # Test CloudFront health
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$FRONTEND_URL" || echo "000")
+          
+          if [ "$HTTP_STATUS" == "200" ]; then
+            echo "✅ CloudFront is healthy (${{ matrix.environment }})"
+            echo "status=healthy" >> $GITHUB_OUTPUT
+          else
+            echo "❌ CloudFront is unhealthy (${{ matrix.environment }}) - Status: $HTTP_STATUS"
+            echo "status=unhealthy" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Check RDS database
+        id: rds-health
+        run: |
+          set +e
+          
+          # Get RDS instance status
+          DB_STATUS=$(aws rds describe-db-instances \
+            --query "DBInstances[?contains(DBInstanceIdentifier, 'advisory-etl-${{ matrix.environment }}')].DBInstanceStatus" \
+            --output text 2>/dev/null)
+          
+          if [ -z "$DB_STATUS" ]; then
+            echo "⚠️ Could not retrieve RDS status for ${{ matrix.environment }}"
+            echo "status=unknown" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          if [ "$DB_STATUS" == "available" ]; then
+            echo "✅ RDS is healthy (${{ matrix.environment }})"
+            echo "status=healthy" >> $GITHUB_OUTPUT
+          else
+            echo "❌ RDS is unhealthy (${{ matrix.environment }}) - Status: $DB_STATUS"
+            echo "status=unhealthy" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Check Lambda functions
+        id: lambda-health
+        run: |
+          set +e
+          
+          # Get Lambda function names from stack
+          FUNCTIONS=$(aws cloudformation describe-stack-resources \
+            --stack-name "AdvisoryETLStack-${{ matrix.environment }}" \
+            --logical-resource-id-starts-with "ETL" \
+            --query "StackResources[?ResourceType=='AWS::Lambda::Function'].PhysicalResourceId" \
+            --output text 2>/dev/null)
+          
+          if [ -z "$FUNCTIONS" ]; then
+            echo "⚠️ Could not retrieve Lambda functions for ${{ matrix.environment }}"
+            echo "status=unknown" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          UNHEALTHY_COUNT=0
+          TOTAL_COUNT=0
+          
+          for FUNCTION in $FUNCTIONS; do
+            TOTAL_COUNT=$((TOTAL_COUNT + 1))
+            
+            # Check function configuration
+            CONFIG=$(aws lambda get-function --function-name "$FUNCTION" 2>/dev/null)
+            if [ $? -ne 0 ]; then
+              echo "❌ Lambda function $FUNCTION is not accessible"
+              UNHEALTHY_COUNT=$((UNHEALTHY_COUNT + 1))
+              continue
+            fi
+            
+            STATE=$(echo "$CONFIG" | jq -r '.Configuration.State // "Unknown"')
+            if [ "$STATE" != "Active" ]; then
+              echo "❌ Lambda function $FUNCTION is not active - State: $STATE"
+              UNHEALTHY_COUNT=$((UNHEALTHY_COUNT + 1))
+            else
+              echo "✅ Lambda function $FUNCTION is healthy"
+            fi
+          done
+          
+          if [ $UNHEALTHY_COUNT -eq 0 ]; then
+            echo "status=healthy" >> $GITHUB_OUTPUT
+          else
+            echo "status=unhealthy" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Check Glue jobs
+        id: glue-health
+        run: |
+          set +e
+          
+          # Get Glue job status
+          JOB_NAME="advisory-performance-etl-${{ matrix.environment }}"
+          JOB_STATE=$(aws glue get-job --job-name "$JOB_NAME" \
+            --query "Job.Name" --output text 2>/dev/null)
+          
+          if [ -z "$JOB_STATE" ] || [ "$JOB_STATE" == "None" ]; then
+            echo "⚠️ Could not retrieve Glue job for ${{ matrix.environment }}"
+            echo "status=unknown" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          # Check recent job runs
+          RECENT_RUNS=$(aws glue get-job-runs --job-name "$JOB_NAME" \
+            --max-items 5 --query "JobRuns[0].JobRunState" --output text 2>/dev/null)
+          
+          if [ "$RECENT_RUNS" == "SUCCEEDED" ] || [ "$RECENT_RUNS" == "RUNNING" ]; then
+            echo "✅ Glue job is healthy (${{ matrix.environment }}) - Last run: $RECENT_RUNS"
+            echo "status=healthy" >> $GITHUB_OUTPUT
+          else
+            echo "❌ Glue job has issues (${{ matrix.environment }}) - Last run: $RECENT_RUNS"
+            echo "status=unhealthy" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Generate health report
+        run: |
+          echo "## Health Check Report - ${{ matrix.environment }}"
+          echo "**Date:** $(date)"
+          echo ""
+          echo "| Service | Status |"
+          echo "|---------|--------|"
+          echo "| API Gateway | ${{ steps.api-health.outputs.status }} |"
+          echo "| CloudFront | ${{ steps.cloudfront-health.outputs.status }} |"
+          echo "| RDS Database | ${{ steps.rds-health.outputs.status }} |"
+          echo "| Lambda Functions | ${{ steps.lambda-health.outputs.status }} |"
+          echo "| Glue Jobs | ${{ steps.glue-health.outputs.status }} |"
+
+      - name: Check for unhealthy services
+        id: overall-health
+        run: |
+          UNHEALTHY_SERVICES=()
+          
+          if [ "${{ steps.api-health.outputs.status }}" == "unhealthy" ]; then
+            UNHEALTHY_SERVICES+=("API Gateway")
+          fi
+          if [ "${{ steps.cloudfront-health.outputs.status }}" == "unhealthy" ]; then
+            UNHEALTHY_SERVICES+=("CloudFront")
+          fi
+          if [ "${{ steps.rds-health.outputs.status }}" == "unhealthy" ]; then
+            UNHEALTHY_SERVICES+=("RDS Database")
+          fi
+          if [ "${{ steps.lambda-health.outputs.status }}" == "unhealthy" ]; then
+            UNHEALTHY_SERVICES+=("Lambda Functions")
+          fi
+          if [ "${{ steps.glue-health.outputs.status }}" == "unhealthy" ]; then
+            UNHEALTHY_SERVICES+=("Glue Jobs")
+          fi
+          
+          if [ ${#UNHEALTHY_SERVICES[@]} -eq 0 ]; then
+            echo "overall=healthy" >> $GITHUB_OUTPUT
+          else
+            echo "overall=unhealthy" >> $GITHUB_OUTPUT
+            echo "unhealthy_services=${UNHEALTHY_SERVICES[*]}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Send alert for unhealthy services
+        if: steps.overall-health.outputs.overall == 'unhealthy'
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          UNHEALTHY_SERVICES="${{ steps.overall-health.outputs.unhealthy_services }}"
+          MESSAGE="🚨 Health Check Alert - ${{ matrix.environment }}
+          
+          The following services are unhealthy:
+          $UNHEALTHY_SERVICES
+          
+          Please investigate immediately."
+          
+          if [ -n "$SLACK_WEBHOOK_URL" ]; then
+            curl -X POST -H 'Content-type: application/json' \
+              --data "{\"text\":\"$MESSAGE\"}" \
+              "$SLACK_WEBHOOK_URL"
+          fi
+          
+          echo "$MESSAGE"
+
+  performance-metrics:
+    name: Performance Metrics
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event.inputs.environment == 'production'
+    
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get CloudWatch metrics
+        run: |
+          echo "Fetching performance metrics..."
+          
+          # Get Lambda metrics
+          aws cloudwatch get-metric-statistics \
+            --namespace AWS/Lambda \
+            --metric-name Duration \
+            --start-time $(date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%S) \
+            --end-time $(date -u +%Y-%m-%dT%H:%M:%S) \
+            --period 3600 \
+            --statistics Average,Maximum \
+            --output table
+          
+          # Get API Gateway metrics
+          aws cloudwatch get-metric-statistics \
+            --namespace AWS/ApiGateway \
+            --metric-name Count \
+            --start-time $(date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%S) \
+            --end-time $(date -u +%Y-%m-%dT%H:%M:%S) \
+            --period 3600 \
+            --statistics Sum \
+            --output table
+
+      - name: Check error rates
+        run: |
+          echo "Checking error rates..."
+          
+          # Get Lambda error rates
+          LAMBDA_ERRORS=$(aws cloudwatch get-metric-statistics \
+            --namespace AWS/Lambda \
+            --metric-name Errors \
+            --start-time $(date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%S) \
+            --end-time $(date -u +%Y-%m-%dT%H:%M:%S) \
+            --period 3600 \
+            --statistics Sum \
+            --query 'Datapoints[0].Sum' \
+            --output text)
+          
+          if [ "$LAMBDA_ERRORS" != "None" ] && [ "$LAMBDA_ERRORS" -gt 10 ]; then
+            echo "⚠️ High Lambda error rate detected: $LAMBDA_ERRORS errors in the last hour"
+          else
+            echo "✅ Lambda error rate is within normal limits"
+          fi
+
+  cost-monitoring:
+    name: Cost Monitoring
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+    
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get cost metrics
+        run: |
+          echo "Fetching cost metrics for the last 7 days..."
+          
+          # Get cost for the last 7 days
+          aws ce get-cost-and-usage \
+            --time-period Start=$(date -u -d '7 days ago' +%Y-%m-%d),End=$(date -u +%Y-%m-%d) \
+            --granularity DAILY \
+            --metrics BlendedCost \
+            --group-by Type=DIMENSION,Key=SERVICE \
+            --filter file://<(echo '{
+              "Dimensions": {
+                "Key": "LINKED_ACCOUNT",
+                "Values": ["'$(aws sts get-caller-identity --query Account --output text)'"]
+              }
+            }') \
+            --output table
+
+      - name: Check for cost anomalies
+        run: |
+          echo "Checking for cost anomalies..."
+          
+          # This is a simplified check - in production, you'd want more sophisticated logic
+          DAILY_COST=$(aws ce get-cost-and-usage \
+            --time-period Start=$(date -u -d '1 day ago' +%Y-%m-%d),End=$(date -u +%Y-%m-%d) \
+            --granularity DAILY \
+            --metrics BlendedCost \
+            --query 'ResultsByTime[0].Total.BlendedCost.Amount' \
+            --output text)
+          
+          echo "Yesterday's cost: \$$DAILY_COST"
+          
+          # Alert if daily cost exceeds threshold (example: $100)
+          if (( $(echo "$DAILY_COST > 100" | bc -l) )); then
+            echo "⚠️ Daily cost exceeded threshold: \$$DAILY_COST"
+          else
+            echo "✅ Daily cost within expected range"
+          fi
