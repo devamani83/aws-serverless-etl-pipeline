@@ -1,6 +1,10 @@
 # AWS Serverless ETL Pipeline for Advisory Performance Data
 
-This project implements a comprehensive serverless ETL pipeline for processing advisory performance data from multiple vendors with different file formats and schemas.
+[![Deploy Pipeline](https://github.com/devamani83/aws-serverless-etl-pipeline/actions/workflows/deploy.yml/badge.svg)](https://github.com/devamani83/aws-serverless-etl-pipeline/actions/workflows/deploy.yml)
+[![Code Quality](https://github.com/devamani83/aws-serverless-etl-pipeline/actions/workflows/code-quality.yml/badge.svg)](https://github.com/devamani83/aws-serverless-etl-pipeline/actions/workflows/code-quality.yml)
+[![Security Scan](https://github.com/devamani83/aws-serverless-etl-pipeline/actions/workflows/security.yml/badge.svg)](https://github.com/devamani83/aws-serverless-etl-pipeline/actions/workflows/security.yml)
+
+This project implements a **production-grade serverless ETL pipeline** for processing advisory performance data from multiple vendors with different file formats and schemas. The solution includes comprehensive CI/CD automation, monitoring, and security features.
 
 ## Architecture Overview
 
@@ -89,3 +93,79 @@ The pipeline is triggered automatically when files are uploaded to the designate
 - Automated alerts for failures
 - Performance metrics tracking
 - Cost monitoring
+
+## 🚀 CI/CD Pipeline
+
+This project includes a comprehensive CI/CD pipeline with GitHub Actions that provides:
+
+### 🔄 Automated Deployments
+- **Staging Environment**: Auto-deployed on pushes to `develop` branch
+- **Production Environment**: Auto-deployed on pushes to `main` branch
+- **Manual Deployments**: Triggered via GitHub Actions UI
+
+### 🧪 Quality Assurance
+- **Automated Testing**: Unit tests, integration tests, and security scans
+- **Code Quality**: Linting, formatting, and complexity analysis
+- **Security Scanning**: Vulnerability detection and secret scanning
+- **Documentation**: Spell checking and link validation
+
+### 📊 Monitoring & Alerts
+- **Health Checks**: Automated health monitoring every 15 minutes
+- **Performance Metrics**: Real-time performance and cost tracking
+- **Notifications**: Slack integration for failure alerts
+- **Database Safety**: Automated backups before migrations
+
+### 🛡️ Security Features
+- **Infrastructure Security**: CDK security validation with cdk-nag
+- **Dependency Scanning**: Automated vulnerability detection
+- **Secret Management**: Secure credential handling
+- **Compliance Checks**: Automated compliance validation
+
+## 📋 Workflows
+
+| Workflow | Trigger | Purpose |
+|----------|---------|---------|
+| **Deploy Pipeline** | Push to main/develop | Full deployment with testing |
+| **Code Quality** | Push/PR | Linting, formatting, testing |
+| **Security Scan** | Push/PR/Schedule | Vulnerability & secret scanning |
+| **Database Migration** | Manual | Safe database migrations |
+| **Monitoring** | Schedule/Manual | Health checks & metrics |
+
+## 🔧 Setup CI/CD
+
+1. **Configure GitHub Secrets**:
+   ```bash
+   # Required secrets in GitHub repository settings:
+   AWS_ACCESS_KEY_ID=your_aws_access_key
+   AWS_SECRET_ACCESS_KEY=your_aws_secret_key
+   
+   # Optional:
+   SLACK_WEBHOOK_URL=your_slack_webhook
+   SONAR_TOKEN=your_sonar_token
+   ```
+
+2. **Environment Protection**:
+   - Production requires manual approval
+   - Staging deploys automatically
+   - All environments require status checks
+
+3. **First Deployment**:
+   ```bash
+   # Push to trigger initial deployment
+   git push origin main
+   
+   # Monitor in GitHub Actions tab
+   # https://github.com/your-username/aws-serverless-etl-pipeline/actions
+   ```
+
+For detailed CI/CD setup instructions, see [.github/SECRETS.md](.github/SECRETS.md).
+
+## 🔍 Monitoring Dashboard
+
+The pipeline automatically creates monitoring dashboards with:
+- **Real-time Metrics**: Processing rates, error counts, latency
+- **Cost Tracking**: Daily spend analysis and budget alerts
+- **Health Status**: Service availability and performance
+- **Data Quality**: Processing success rates and reconciliation metrics
+
+Access monitoring at: `https://<cloudfront-domain>/dashboard`
