@@ -46,7 +46,7 @@ Cumulative TWRR compounds the returns over multiple periods.
 ## Project Structure
 
 ```
-aws-glue/
+aws-serverless-etl-pipeline/
 ├── infrastructure/          # CloudFormation/CDK templates
 ├── glue-jobs/              # AWS Glue ETL scripts
 ├── lambda-functions/       # Lambda function code
