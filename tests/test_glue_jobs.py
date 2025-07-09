@@ -25,7 +25,7 @@ sys.modules['awsglue.job'] = Mock()
 
 # Now we can import our module
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'glue-jobs'))
-from advisory_performance_etl import PerformanceCalculator, DataValidator, VendorDataProcessor
+from advisory_performance_etl import PerformanceCalculator, DataValidator, ETLProcessor
 
 class TestPerformanceCalculator(unittest.TestCase):
     """Test financial calculations"""
@@ -219,12 +219,12 @@ class TestDataValidator(unittest.TestCase):
         self.assertEqual(len(outliers), 1)
         self.assertIn(0.5, outliers)
 
-class TestVendorDataProcessor(unittest.TestCase):
+class TestETLProcessor(unittest.TestCase):
     """Test vendor-specific data processing"""
     
     def setUp(self):
         """Set up test environment"""
-        self.processor = VendorDataProcessor()
+        self.processor = ETLProcessor()
     
     def test_load_vendor_mapping(self):
         """Test vendor mapping configuration loading"""
