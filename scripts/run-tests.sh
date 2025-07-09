@@ -49,7 +49,8 @@ install_dependencies() {
     
     # Install Python dependencies
     if [ -f "requirements-test.txt" ]; then
-        pip install -r requirements-test.txt
+        # Use relative path to virtual environment
+        ../../../.venv/bin/pip install -r requirements-test.txt
         success "Python test dependencies installed"
     else
         warning "requirements-test.txt not found, skipping Python dependencies"
@@ -164,8 +165,8 @@ run_unit_tests() {
     log "Running unit tests..."
     
     # Python unit tests with pytest
-    if command_exists pytest; then
-        pytest tests/test_*.py \
+    if command_exists ../.venv/bin/pytest; then
+        ../.venv/bin/pytest tests/test_*.py \
             -v \
             --cov=. \
             --cov-report=html:tests/coverage/html \
@@ -208,8 +209,8 @@ run_unit_tests() {
 run_integration_tests() {
     log "Running integration tests..."
     
-    if command_exists pytest; then
-        pytest tests/test_integration.py \
+    if command_exists ../.venv/bin/pytest; then
+        ../.venv/bin/pytest tests/test_integration.py \
             -v \
             --html=tests/reports/integration-report.html \
             --self-contained-html \
@@ -224,8 +225,8 @@ run_integration_tests() {
 run_performance_tests() {
     log "Running performance tests..."
     
-    if command_exists pytest; then
-        pytest tests/ \
+    if command_exists ../.venv/bin/pytest; then
+        ../.venv/bin/pytest tests/ \
             -v \
             --benchmark-only \
             --benchmark-json=tests/reports/benchmark.json \
