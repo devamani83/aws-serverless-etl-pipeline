@@ -1,0 +1,163 @@
+{
+    "folders": [
+        {
+            "name": "aws-serverless-etl-pipeline",
+            "path": "."
+        }
+    ],
+    "settings": {
+        "python.defaultInterpreterPath": "../.venv/bin/python",
+        "python.terminal.activateEnvironment": true,
+        "python.linting.enabled": true,
+        "python.linting.flake8Enabled": true,
+        "python.linting.pylintEnabled": false,
+        "python.formatting.provider": "black",
+        "python.testing.pytestEnabled": true,
+        "python.testing.pytestArgs": [
+            "tests"
+        ],
+        "files.exclude": {
+            "**/__pycache__": true,
+            "**/*.pyc": true,
+            "**/node_modules": true,
+            ".pytest_cache": true,
+            ".coverage": true,
+            "**/.DS_Store": true
+        },
+        "search.exclude": {
+            "**/node_modules": true,
+            "**/bower_components": true,
+            "**/*.code-search": true,
+            ".venv": true,
+            ".pytest_cache": true,
+            "**/__pycache__": true
+        },
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+            "source.organizeImports": "explicit"
+        },
+        "typescript.preferences.quoteStyle": "single",
+        "javascript.preferences.quoteStyle": "single",
+        "eslint.workingDirectories": [
+            "ui-application/frontend"
+        ],
+        "git.ignoreLimitWarning": true
+    },
+    "extensions": {
+        "recommendations": [
+            "ms-python.python",
+            "ms-python.flake8",
+            "ms-python.black-formatter",
+            "ms-vscode.vscode-typescript-next",
+            "esbenp.prettier-vscode",
+            "ms-vscode.vscode-json",
+            "redhat.vscode-yaml",
+            "ms-vscode.cmake-tools",
+            "amazonwebservices.aws-toolkit-vscode",
+            "ms-vscode.azure-account",
+            "GitHub.copilot",
+            "GitHub.vscode-pull-request-github",
+            "eamodio.gitlens"
+        ]
+    },
+    "launch": {
+        "version": "0.2.0",
+        "configurations": [
+            {
+                "name": "Python: Current File",
+                "type": "debugpy",
+                "request": "launch",
+                "program": "${file}",
+                "console": "integratedTerminal",
+                "justMyCode": true
+            },
+            {
+                "name": "Python: Flask Backend",
+                "type": "debugpy",
+                "request": "launch",
+                "program": "${workspaceFolder}/ui-application/backend/app.py",
+                "console": "integratedTerminal",
+                "justMyCode": true,
+                "env": {
+                    "FLASK_ENV": "development",
+                    "FLASK_DEBUG": "1"
+                }
+            },
+            {
+                "name": "Python: Run Tests",
+                "type": "debugpy",
+                "request": "launch",
+                "module": "pytest",
+                "args": [
+                    "tests/",
+                    "-v"
+                ],
+                "console": "integratedTerminal",
+                "justMyCode": false
+            }
+        ]
+    },
+    "tasks": {
+        "version": "2.0.0",
+        "tasks": [
+            {
+                "label": "Run Tests",
+                "type": "shell",
+                "command": "./scripts/run-tests.sh",
+                "group": "test",
+                "presentation": {
+                    "echo": true,
+                    "reveal": "always",
+                    "focus": false,
+                    "panel": "shared"
+                },
+                "problemMatcher": []
+            },
+            {
+                "label": "Deploy Infrastructure",
+                "type": "shell",
+                "command": "./scripts/deploy.sh",
+                "group": "build",
+                "presentation": {
+                    "echo": true,
+                    "reveal": "always",
+                    "focus": false,
+                    "panel": "shared"
+                },
+                "problemMatcher": []
+            },
+            {
+                "label": "Start Frontend Dev Server",
+                "type": "shell",
+                "command": "npm start",
+                "options": {
+                    "cwd": "${workspaceFolder}/ui-application/frontend"
+                },
+                "group": "build",
+                "presentation": {
+                    "echo": true,
+                    "reveal": "always",
+                    "focus": false,
+                    "panel": "shared"
+                },
+                "problemMatcher": []
+            },
+            {
+                "label": "Start Flask Backend",
+                "type": "shell",
+                "command": "python app.py",
+                "options": {
+                    "cwd": "${workspaceFolder}/ui-application/backend"
+                },
+                "group": "build",
+                "presentation": {
+                    "echo": true,
+                    "reveal": "always",
+                    "focus": false,
+                    "panel": "shared"
+                },
+                "problemMatcher": []
+            }
+        ]
+    }
+}
