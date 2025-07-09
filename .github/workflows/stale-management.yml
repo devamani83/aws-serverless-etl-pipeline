@@ -1,0 +1,240 @@
+name: Stale Issues and PRs Management
+
+on:
+  schedule:
+    # Run daily at 1 AM UTC
+    - cron: '0 1 * * *'
+  workflow_dispatch:
+
+jobs:
+  stale:
+    name: Mark Stale Issues and PRs
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Mark stale issues and PRs
+        uses: actions/stale@v8
+        with:
+          # Repository token
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          
+          # Days before an issue/PR is marked as stale
+          days-before-stale: 14
+          
+          # Days before a stale issue/PR is closed
+          days-before-close: 7
+          
+          # Days before a PR is marked as stale (shorter than issues)
+          days-before-pr-stale: 7
+          
+          # Days before a stale PR is closed
+          days-before-pr-close: 5
+          
+          # Label to apply when marking as stale
+          stale-issue-label: 'stale'
+          stale-pr-label: 'stale'
+          
+          # Label to apply when closing
+          close-issue-label: 'auto-closed'
+          close-pr-label: 'auto-closed'
+          
+          # Exempt labels - issues/PRs with these labels won't be marked stale
+          exempt-issue-labels: 'pinned,security,critical,epic,roadmap,good-first-issue'
+          exempt-pr-labels: 'pinned,security,critical,work-in-progress,on-hold'
+          
+          # Only process issues/PRs in certain states
+          only-issue-labels: ''
+          only-pr-labels: ''
+          
+          # Messages to post
+          stale-issue-message: |
+            This issue has been automatically marked as stale because it has not had recent activity. 
+            
+            **What happens next?**
+            - This issue will be **closed in 7 days** if no further activity occurs
+            - To keep this issue open, simply **add a comment** or **remove the stale label**
+            - If you believe this issue is still relevant, please provide an update
+            
+            **Need help?**
+            - Add more context or details to help us understand the issue
+            - Reference related issues or PRs
+            - Tag relevant maintainers if urgent
+            
+            Thank you for your contributions! 🚀
+            
+          stale-pr-message: |
+            This pull request has been automatically marked as stale because it has not had recent activity.
+            
+            **What happens next?**
+            - This PR will be **closed in 5 days** if no further activity occurs
+            - To keep this PR open, simply **add a comment**, **push new commits**, or **remove the stale label**
+            - If you're still working on this, please provide a status update
+            
+            **To reactivate this PR:**
+            - Rebase on the latest develop branch
+            - Address any merge conflicts
+            - Respond to review comments
+            - Update the PR description if needed
+            
+            **Need help?**
+            - Ask questions in the comments
+            - Check our [Contributing Guide](.github/CONTRIBUTING.md)
+            - Tag @devamani83 if you need assistance
+            
+            Thank you for your contribution! 🚀
+            
+          close-issue-message: |
+            This issue has been automatically closed due to inactivity.
+            
+            **Don't worry!** You can always:
+            - **Reopen this issue** if it's still relevant
+            - **Create a new issue** with updated information
+            - **Reference this issue** in related discussions
+            
+            Thank you for your contribution to the project! 🚀
+            
+          close-pr-message: |
+            This pull request has been automatically closed due to inactivity.
+            
+            **Don't worry!** You can always:
+            - **Reopen this PR** if you're ready to continue
+            - **Create a new PR** with your latest changes
+            - **Reference this PR** in future work
+            
+            **To resume work:**
+            1. Rebase your branch on the latest develop
+            2. Address any conflicts or feedback
+            3. Push your changes and reopen the PR
+            
+            Thank you for your contribution! 🚀
+            
+          # Assignees and milestones
+          exempt-issue-assignees: 'devamani83'
+          exempt-pr-assignees: 'devamani83'
+          exempt-milestones: 'v1.0.0,Critical,Security'
+          
+          # Additional options
+          operations-per-run: 100
+          remove-stale-when-updated: true
+          debug-only: false
+          ascending: false
+          delete-branch: false
+          
+          # Start date (only process issues/PRs created after this date)
+          start-date: '2024-01-01T00:00:00Z'
+
+  stale-cleanup:
+    name: Cleanup Stale Branches
+    runs-on: ubuntu-latest
+    needs: stale
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install GitHub CLI
+        run: |
+          type -p curl >/dev/null || sudo apt update && sudo apt install curl -y
+          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+          sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+          sudo apt update
+          sudo apt install gh -y
+
+      - name: Configure GitHub CLI
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
+
+      - name: Find and delete stale branches
+        run: |
+          echo "🧹 Finding stale branches..."
+          
+          # Get list of closed PRs that were auto-closed due to staleness
+          CLOSED_PRS=$(gh pr list --state closed --label "auto-closed" --json number,headRefName,closedAt --limit 50)
+          
+          # Process each closed PR
+          echo "$CLOSED_PRS" | jq -r '.[] | select(.closedAt > (now - 86400 * 7 | strftime("%Y-%m-%dT%H:%M:%SZ"))) | .headRefName' | while read -r BRANCH; do
+            if [ -n "$BRANCH" ] && [ "$BRANCH" != "main" ] && [ "$BRANCH" != "develop" ]; then
+              echo "🗑️  Considering branch for deletion: $BRANCH"
+              
+              # Check if branch still exists
+              if git show-ref --verify --quiet refs/remotes/origin/$BRANCH; then
+                echo "🔍 Branch $BRANCH exists, checking if it's safe to delete..."
+                
+                # Check if branch has been merged
+                if git merge-base --is-ancestor origin/$BRANCH origin/main || git merge-base --is-ancestor origin/$BRANCH origin/develop; then
+                  echo "✅ Branch $BRANCH has been merged, safe to delete"
+                  git push origin --delete $BRANCH || echo "⚠️  Failed to delete $BRANCH (may already be deleted)"
+                else
+                  echo "⚠️  Branch $BRANCH has not been merged, keeping it"
+                fi
+              else
+                echo "ℹ️  Branch $BRANCH doesn't exist remotely"
+              fi
+            fi
+          done
+
+  metrics:
+    name: Generate Stale Metrics
+    runs-on: ubuntu-latest
+    needs: [stale, stale-cleanup]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install GitHub CLI
+        run: |
+          type -p curl >/dev/null || sudo apt update && sudo apt install curl -y
+          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+          sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+          sudo apt update
+          sudo apt install gh -y
+
+      - name: Configure GitHub CLI
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
+
+      - name: Generate metrics
+        run: |
+          echo "📊 Generating stale management metrics..."
+          
+          # Count current stale issues and PRs
+          STALE_ISSUES=$(gh issue list --label "stale" --json number | jq length)
+          STALE_PRS=$(gh pr list --label "stale" --json number | jq length)
+          
+          # Count recently closed items
+          CLOSED_ISSUES=$(gh issue list --state closed --label "auto-closed" --json closedAt | jq 'map(select(.closedAt > (now - 86400 | strftime("%Y-%m-%dT%H:%M:%SZ")))) | length')
+          CLOSED_PRS=$(gh pr list --state closed --label "auto-closed" --json closedAt | jq 'map(select(.closedAt > (now - 86400 | strftime("%Y-%m-%dT%H:%M:%SZ")))) | length')
+          
+          # Generate summary
+          echo "📈 Stale Management Summary ($(date)):"
+          echo "=================================="
+          echo "📋 Current stale issues: $STALE_ISSUES"
+          echo "🔄 Current stale PRs: $STALE_PRS"  
+          echo "🗑️  Issues auto-closed today: $CLOSED_ISSUES"
+          echo "🗑️  PRs auto-closed today: $CLOSED_PRS"
+          echo ""
+          
+          # Save metrics to file
+          cat > stale-metrics.json << EOF
+          {
+            "date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "stale_issues": $STALE_ISSUES,
+            "stale_prs": $STALE_PRS,
+            "closed_issues_today": $CLOSED_ISSUES,
+            "closed_prs_today": $CLOSED_PRS
+          }
+          EOF
+          
+          echo "📄 Metrics saved to stale-metrics.json"
+
+      - name: Upload metrics
+        uses: actions/upload-artifact@v3
+        with:
+          name: stale-metrics
+          path: stale-metrics.json
+          retention-days: 30

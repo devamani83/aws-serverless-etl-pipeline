@@ -1,0 +1,231 @@
+name: Auto Assign Reviewers and Labels
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+jobs:
+  auto-assign:
+    name: Auto Assign Reviewers and Labels
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get changed files
+        id: changed-files
+        run: |
+          # Get list of changed files
+          CHANGED_FILES=$(git diff --name-only ${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }})
+          echo "Changed files:"
+          echo "$CHANGED_FILES"
+          
+          # Initialize arrays
+          LABELS=()
+          REVIEWERS=()
+          
+          # Check for different types of changes
+          if echo "$CHANGED_FILES" | grep -E "infrastructure/|\.yml$|\.yaml$|cdk\.json"; then
+            LABELS+=("infrastructure")
+            REVIEWERS+=("devamani83")
+          fi
+          
+          if echo "$CHANGED_FILES" | grep -E "glue-jobs/|lambda-functions/|step-functions/"; then
+            LABELS+=("backend")
+            LABELS+=("etl")
+            REVIEWERS+=("devamani83")
+          fi
+          
+          if echo "$CHANGED_FILES" | grep -E "ui-application/frontend/"; then
+            LABELS+=("frontend")
+            REVIEWERS+=("devamani83")
+          fi
+          
+          if echo "$CHANGED_FILES" | grep -E "ui-application/backend/"; then
+            LABELS+=("backend")
+            LABELS+=("api")
+            REVIEWERS+=("devamani83")
+          fi
+          
+          if echo "$CHANGED_FILES" | grep -E "sql/|scripts/.*database|scripts/.*migrate"; then
+            LABELS+=("database")
+            LABELS+=("migration")
+            REVIEWERS+=("devamani83")
+          fi
+          
+          if echo "$CHANGED_FILES" | grep -E "\.github/workflows/|\.github/.*\.yml"; then
+            LABELS+=("ci/cd")
+            LABELS+=("github-actions")
+            REVIEWERS+=("devamani83")
+          fi
+          
+          if echo "$CHANGED_FILES" | grep -E "docs/|README\.md|\.md$"; then
+            LABELS+=("documentation")
+          fi
+          
+          if echo "$CHANGED_FILES" | grep -E "tests/|test_|.*\.test\."; then
+            LABELS+=("tests")
+          fi
+          
+          if echo "$CHANGED_FILES" | grep -E "requirements\.txt|package\.json|pyproject\.toml"; then
+            LABELS+=("dependencies")
+          fi
+          
+          if echo "$CHANGED_FILES" | grep -E "config/|environment\.json"; then
+            LABELS+=("configuration")
+          fi
+          
+          # Security-sensitive files
+          if echo "$CHANGED_FILES" | grep -E "security\.yml|secrets|auth|iam|permissions"; then
+            LABELS+=("security")
+            LABELS+=("needs-security-review")
+            REVIEWERS+=("devamani83")
+          fi
+          
+          # Performance-related changes
+          if echo "$CHANGED_FILES" | grep -E "performance|optimization|cache|memory"; then
+            LABELS+=("performance")
+          fi
+          
+          # Determine PR size
+          NUM_FILES=$(echo "$CHANGED_FILES" | wc -l)
+          TOTAL_CHANGES=$(git diff --shortstat ${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }} | awk '{print $4+$6}')
+          
+          if [ "$TOTAL_CHANGES" -gt 500 ]; then
+            LABELS+=("size/large")
+          elif [ "$TOTAL_CHANGES" -gt 100 ]; then
+            LABELS+=("size/medium")
+          else
+            LABELS+=("size/small")
+          fi
+          
+          # Convert arrays to comma-separated strings
+          LABELS_STR=$(IFS=','; echo "${LABELS[*]}")
+          REVIEWERS_STR=$(IFS=','; echo "${REVIEWERS[*]}")
+          
+          echo "labels=$LABELS_STR" >> $GITHUB_OUTPUT
+          echo "reviewers=$REVIEWERS_STR" >> $GITHUB_OUTPUT
+          echo "num_files=$NUM_FILES" >> $GITHUB_OUTPUT
+          echo "total_changes=$TOTAL_CHANGES" >> $GITHUB_OUTPUT
+
+      - name: Add labels to PR
+        if: steps.changed-files.outputs.labels != ''
+        uses: actions-ecosystem/action-add-labels@v1
+        with:
+          labels: ${{ steps.changed-files.outputs.labels }}
+
+      - name: Request reviews
+        if: steps.changed-files.outputs.reviewers != ''
+        uses: actions-ecosystem/action-request-reviews@v1
+        with:
+          reviewers: ${{ steps.changed-files.outputs.reviewers }}
+
+      - name: Add size comment
+        if: steps.changed-files.outputs.total_changes > 500
+        uses: actions-ecosystem/action-create-comment@v1
+        with:
+          body: |
+            ## 📏 Large PR Notice
+            
+            This PR contains **${{ steps.changed-files.outputs.total_changes }}** lines of changes across **${{ steps.changed-files.outputs.num_files }}** files.
+            
+            **Recommendations:**
+            - Consider breaking this into smaller PRs for easier review
+            - Ensure comprehensive testing for large changes
+            - Allow extra time for thorough code review
+            - Document any breaking changes clearly
+            
+            **Review Checklist:**
+            - [ ] All automated tests pass
+            - [ ] Manual testing completed
+            - [ ] Performance impact assessed
+            - [ ] Security implications reviewed
+            - [ ] Documentation updated
+
+      - name: Check for breaking changes
+        id: breaking-changes
+        run: |
+          CHANGED_FILES=$(git diff --name-only ${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }})
+          
+          # Check for potential breaking changes
+          BREAKING=false
+          
+          if echo "$CHANGED_FILES" | grep -E "ui-application/backend/.*routes|lambda-functions/.*handler"; then
+            if git diff ${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }} | grep -E "^\-.*def |^\-.*class |^\-.*endpoint"; then
+              BREAKING=true
+            fi
+          fi
+          
+          if echo "$CHANGED_FILES" | grep -E "sql/schema\.sql"; then
+            if git diff ${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }} | grep -E "DROP |ALTER.*DROP|RENAME"; then
+              BREAKING=true
+            fi
+          fi
+          
+          echo "breaking=$BREAKING" >> $GITHUB_OUTPUT
+
+      - name: Add breaking changes warning
+        if: steps.breaking-changes.outputs.breaking == 'true'
+        uses: actions-ecosystem/action-add-labels@v1
+        with:
+          labels: "breaking-change,needs-migration-guide"
+
+      - name: Add breaking changes comment
+        if: steps.breaking-changes.outputs.breaking == 'true'
+        uses: actions-ecosystem/action-create-comment@v1
+        with:
+          body: |
+            ## ⚠️ Potential Breaking Changes Detected
+            
+            This PR may contain breaking changes that could affect existing functionality.
+            
+            **Required Actions:**
+            - [ ] Confirm if changes are indeed breaking
+            - [ ] Update API version if applicable
+            - [ ] Create migration guide for users
+            - [ ] Update documentation with breaking changes
+            - [ ] Coordinate deployment with stakeholders
+            - [ ] Plan rollback strategy
+            
+            **Breaking Change Types Detected:**
+            - API endpoint modifications
+            - Database schema changes
+            - Function/method signature changes
+            
+            Please ensure proper communication and migration planning before merging.
+
+      - name: Auto-assign milestone
+        uses: actions-ecosystem/action-add-milestone@v1
+        with:
+          milestone: "Next Release"
+        continue-on-error: true
+
+      - name: Add welcome comment for first-time contributors
+        if: github.event.pull_request.author_association == 'FIRST_TIME_CONTRIBUTOR'
+        uses: actions-ecosystem/action-create-comment@v1
+        with:
+          body: |
+            ## 🎉 Welcome to the AWS Serverless ETL Pipeline project!
+            
+            Thank you for your first contribution! We're excited to have you as part of our community.
+            
+            **What happens next?**
+            1. Our automated checks will run on your PR
+            2. A maintainer will review your changes
+            3. We may ask for some changes or clarifications
+            4. Once approved, we'll merge your contribution
+            
+            **Need help?**
+            - 📚 Check our [Contributing Guide](.github/CONTRIBUTING.md)
+            - 💬 Ask questions in the PR comments
+            - 📖 Read our [Documentation](docs/)
+            
+            **Tips for a smooth review:**
+            - Make sure all automated checks pass
+            - Respond to feedback promptly
+            - Keep changes focused and well-documented
+            
+            Thanks again for contributing! 🚀

@@ -1,0 +1,415 @@
+name: Release Management
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+  
+  workflow_dispatch:
+    inputs:
+      version_type:
+        description: 'Version bump type'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+      release_notes:
+        description: 'Additional release notes'
+        required: false
+        type: string
+
+jobs:
+  detect-changes:
+    name: Detect Version Bump Type
+    runs-on: ubuntu-latest
+    outputs:
+      version_type: ${{ steps.detect.outputs.version_type }}
+      should_release: ${{ steps.detect.outputs.should_release }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect version bump type
+        id: detect
+        run: |
+          # If manually triggered, use the input
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version_type=${{ github.event.inputs.version_type }}" >> $GITHUB_OUTPUT
+            echo "should_release=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          # For push events, analyze commit messages since last tag
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          
+          if [ -z "$LAST_TAG" ]; then
+            echo "No previous tags found, will create initial release"
+            echo "version_type=minor" >> $GITHUB_OUTPUT
+            echo "should_release=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          # Get commits since last tag
+          COMMITS=$(git log ${LAST_TAG}..HEAD --oneline)
+          echo "Commits since last tag ($LAST_TAG):"
+          echo "$COMMITS"
+          
+          # Analyze commit messages for conventional commits
+          VERSION_TYPE="patch"
+          SHOULD_RELEASE="false"
+          
+          if echo "$COMMITS" | grep -E "^[a-f0-9]+ (feat|feature)\(!?\):"; then
+            VERSION_TYPE="minor"
+            SHOULD_RELEASE="true"
+          fi
+          
+          if echo "$COMMITS" | grep -E "^[a-f0-9]+ (fix|bugfix)\(!?\):"; then
+            SHOULD_RELEASE="true"
+          fi
+          
+          if echo "$COMMITS" | grep -E "BREAKING CHANGE|!:"; then
+            VERSION_TYPE="major"
+            SHOULD_RELEASE="true"
+          fi
+          
+          # Check for infrastructure or security changes
+          if echo "$COMMITS" | grep -E "(infra|infrastructure|security|critical)"; then
+            SHOULD_RELEASE="true"
+          fi
+          
+          echo "version_type=$VERSION_TYPE" >> $GITHUB_OUTPUT
+          echo "should_release=$SHOULD_RELEASE" >> $GITHUB_OUTPUT
+
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.should_release == 'true'
+    outputs:
+      new_version: ${{ steps.version.outputs.new_version }}
+      release_url: ${{ steps.create_release.outputs.html_url }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Calculate new version
+        id: version
+        run: |
+          # Get current version from package.json or default to 0.0.0
+          if [ -f "ui-application/frontend/package.json" ]; then
+            CURRENT_VERSION=$(jq -r '.version' ui-application/frontend/package.json)
+          else
+            CURRENT_VERSION="0.0.0"
+          fi
+          
+          echo "Current version: $CURRENT_VERSION"
+          
+          # Calculate new version
+          IFS='.' read -ra VERSION_PARTS <<< "$CURRENT_VERSION"
+          MAJOR=${VERSION_PARTS[0]:-0}
+          MINOR=${VERSION_PARTS[1]:-0}
+          PATCH=${VERSION_PARTS[2]:-0}
+          
+          case "${{ needs.detect-changes.outputs.version_type }}" in
+            "major")
+              MAJOR=$((MAJOR + 1))
+              MINOR=0
+              PATCH=0
+              ;;
+            "minor")
+              MINOR=$((MINOR + 1))
+              PATCH=0
+              ;;
+            "patch")
+              PATCH=$((PATCH + 1))
+              ;;
+          esac
+          
+          NEW_VERSION="$MAJOR.$MINOR.$PATCH"
+          echo "New version: $NEW_VERSION"
+          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+
+      - name: Update version files
+        run: |
+          NEW_VERSION="${{ steps.version.outputs.new_version }}"
+          
+          # Update package.json if it exists
+          if [ -f "ui-application/frontend/package.json" ]; then
+            jq ".version = \"$NEW_VERSION\"" ui-application/frontend/package.json > tmp.json && mv tmp.json ui-application/frontend/package.json
+            echo "Updated frontend package.json to version $NEW_VERSION"
+          fi
+          
+          # Update pyproject.toml if it exists
+          if [ -f "pyproject.toml" ]; then
+            sed -i "s/version = \".*\"/version = \"$NEW_VERSION\"/" pyproject.toml
+            echo "Updated pyproject.toml to version $NEW_VERSION"
+          fi
+          
+          # Create or update VERSION file
+          echo "$NEW_VERSION" > VERSION
+          echo "Created VERSION file with $NEW_VERSION"
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          NEW_VERSION="${{ steps.version.outputs.new_version }}"
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          
+          echo "Generating changelog for version $NEW_VERSION"
+          
+          # Create changelog
+          cat > RELEASE_NOTES.md << EOF
+          # Release $NEW_VERSION
+          
+          **Release Date:** $(date '+%Y-%m-%d')
+          **Version Type:** ${{ needs.detect-changes.outputs.version_type }}
+          
+          ## 🚀 What's New
+          
+          EOF
+          
+          if [ -n "$LAST_TAG" ]; then
+            echo "### 📋 Changes since $LAST_TAG" >> RELEASE_NOTES.md
+            echo "" >> RELEASE_NOTES.md
+            
+            # Features
+            FEATURES=$(git log ${LAST_TAG}..HEAD --oneline --grep="feat" --grep="feature" | sed 's/^[a-f0-9]* /- /')
+            if [ -n "$FEATURES" ]; then
+              echo "#### ✨ New Features" >> RELEASE_NOTES.md
+              echo "$FEATURES" >> RELEASE_NOTES.md
+              echo "" >> RELEASE_NOTES.md
+            fi
+            
+            # Bug fixes
+            FIXES=$(git log ${LAST_TAG}..HEAD --oneline --grep="fix" --grep="bugfix" | sed 's/^[a-f0-9]* /- /')
+            if [ -n "$FIXES" ]; then
+              echo "#### 🐛 Bug Fixes" >> RELEASE_NOTES.md
+              echo "$FIXES" >> RELEASE_NOTES.md
+              echo "" >> RELEASE_NOTES.md
+            fi
+            
+            # Infrastructure changes
+            INFRA=$(git log ${LAST_TAG}..HEAD --oneline --grep="infra" --grep="ci" --grep="build" | sed 's/^[a-f0-9]* /- /')
+            if [ -n "$INFRA" ]; then
+              echo "#### 🏗️ Infrastructure & CI/CD" >> RELEASE_NOTES.md
+              echo "$INFRA" >> RELEASE_NOTES.md
+              echo "" >> RELEASE_NOTES.md
+            fi
+            
+            # Documentation
+            DOCS=$(git log ${LAST_TAG}..HEAD --oneline --grep="docs" --grep="documentation" | sed 's/^[a-f0-9]* /- /')
+            if [ -n "$DOCS" ]; then
+              echo "#### 📚 Documentation" >> RELEASE_NOTES.md
+              echo "$DOCS" >> RELEASE_NOTES.md
+              echo "" >> RELEASE_NOTES.md
+            fi
+            
+            # Other changes
+            OTHER=$(git log ${LAST_TAG}..HEAD --oneline --invert-grep --grep="feat" --grep="fix" --grep="docs" --grep="infra" --grep="ci" --grep="build" | sed 's/^[a-f0-9]* /- /')
+            if [ -n "$OTHER" ]; then
+              echo "#### 🔧 Other Changes" >> RELEASE_NOTES.md
+              echo "$OTHER" >> RELEASE_NOTES.md
+              echo "" >> RELEASE_NOTES.md
+            fi
+          else
+            echo "### 🎉 Initial Release" >> RELEASE_NOTES.md
+            echo "" >> RELEASE_NOTES.md
+            echo "This is the initial release of the AWS Serverless ETL Pipeline." >> RELEASE_NOTES.md
+            echo "" >> RELEASE_NOTES.md
+          fi
+          
+          # Add manual release notes if provided
+          if [ -n "${{ github.event.inputs.release_notes }}" ]; then
+            echo "### 📝 Additional Notes" >> RELEASE_NOTES.md
+            echo "" >> RELEASE_NOTES.md
+            echo "${{ github.event.inputs.release_notes }}" >> RELEASE_NOTES.md
+            echo "" >> RELEASE_NOTES.md
+          fi
+          
+          # Add deployment and upgrade information
+          cat >> RELEASE_NOTES.md << EOF
+          ## 🚀 Deployment Information
+          
+          ### Prerequisites
+          - AWS CLI configured with appropriate permissions
+          - Node.js 18+ and Python 3.9+
+          - Docker for local development
+          
+          ### Deployment Steps
+          1. **Infrastructure**: \`cd infrastructure && cdk deploy\`
+          2. **Frontend**: \`cd ui-application && ./deploy_frontend.sh\`
+          3. **Database**: Run any migration scripts in \`sql/\`
+          
+          ### Upgrade Notes
+          - Review breaking changes section if upgrading from previous version
+          - Backup your database before applying migrations
+          - Test in staging environment before production deployment
+          
+          ## 🔗 Links
+          - [Documentation](docs/)
+          - [Architecture Diagrams](docs/ADDITIONAL_DIAGRAMS.md)
+          - [Operations Guide](docs/OPERATIONS_GUIDE.md)
+          - [GitHub Repository](https://github.com/devamani83/aws-serverless-etl-pipeline)
+          
+          ## 📞 Support
+          - Create an issue on GitHub
+          - Contact @devamani83
+          - Check our documentation for troubleshooting guides
+          
+          ---
+          
+          **Full Changelog**: https://github.com/devamani83/aws-serverless-etl-pipeline/compare/${LAST_TAG}...v${NEW_VERSION}
+          EOF
+          
+          echo "Generated changelog:"
+          cat RELEASE_NOTES.md
+
+      - name: Commit version updates
+        run: |
+          NEW_VERSION="${{ steps.version.outputs.new_version }}"
+          
+          git add .
+          git commit -m "chore: bump version to $NEW_VERSION" || echo "No changes to commit"
+          git tag -a "v$NEW_VERSION" -m "Release version $NEW_VERSION"
+          git push origin main
+          git push origin "v$NEW_VERSION"
+
+      - name: Create GitHub Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: v${{ steps.version.outputs.new_version }}
+          release_name: Release v${{ steps.version.outputs.new_version }}
+          body_path: RELEASE_NOTES.md
+          draft: false
+          prerelease: false
+
+      - name: Upload release artifacts
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: VERSION
+          asset_name: VERSION
+          asset_content_type: text/plain
+
+  deploy-release:
+    name: Deploy Release
+    runs-on: ubuntu-latest
+    needs: [detect-changes, create-release]
+    if: needs.detect-changes.outputs.should_release == 'true'
+    environment: production
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: v${{ needs.create-release.outputs.new_version }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Deploy infrastructure
+        run: |
+          echo "🚀 Deploying infrastructure for release v${{ needs.create-release.outputs.new_version }}"
+          cd infrastructure
+          npm install
+          npx cdk deploy --all --require-approval never
+
+      - name: Deploy frontend
+        run: |
+          echo "🌐 Deploying frontend for release v${{ needs.create-release.outputs.new_version }}"
+          cd ui-application
+          chmod +x deploy_frontend.sh
+          ./deploy_frontend.sh
+
+  notify-release:
+    name: Notify Release
+    runs-on: ubuntu-latest
+    needs: [create-release, deploy-release]
+    if: always() && needs.create-release.result == 'success'
+    
+    steps:
+      - name: Notify Slack
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ needs.deploy-release.result }}
+          fields: repo,message,commit,author,action,eventName,ref,workflow
+          webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
+          text: |
+            🎉 *New Release: v${{ needs.create-release.outputs.new_version }}*
+            
+            📋 *Release Details:*
+            • Version: v${{ needs.create-release.outputs.new_version }}
+            • Type: ${{ needs.detect-changes.outputs.version_type }}
+            • Deployment: ${{ needs.deploy-release.result }}
+            • Release URL: ${{ needs.create-release.outputs.release_url }}
+            
+            🚀 *Deployment Status:*
+            ${{ needs.deploy-release.result == 'success' && '✅ Successfully deployed to production' || '❌ Deployment failed - check GitHub Actions' }}
+        if: always()
+
+      - name: Create deployment issue
+        if: needs.deploy-release.result == 'failure'
+        uses: actions-ecosystem/action-create-issue@v1
+        with:
+          title: "🚨 Deployment Failed for Release v${{ needs.create-release.outputs.new_version }}"
+          body: |
+            ## Deployment Failure Report
+            
+            **Release:** v${{ needs.create-release.outputs.new_version }}
+            **Deployment Status:** Failed
+            **Workflow Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            
+            ### Next Steps
+            - [ ] Review deployment logs
+            - [ ] Check AWS resources
+            - [ ] Verify configuration
+            - [ ] Manual deployment if needed
+            - [ ] Update documentation
+            
+            ### Rollback Plan
+            If needed, rollback to previous stable version:
+            ```bash
+            # Revert infrastructure
+            cd infrastructure
+            npx cdk deploy --rollback
+            
+            # Revert frontend
+            cd ui-application
+            ./deploy_frontend.sh --version=previous
+            ```
+            
+            **Priority:** High
+            **Assignee:** @devamani83
+          labels: deployment,critical,bug
